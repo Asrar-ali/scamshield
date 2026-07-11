@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
     "build": "npm run build -w apps/server && npm run build -w apps/web",
+    "start": "SERVE_WEB=1 node apps/server/dist/index.js",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },

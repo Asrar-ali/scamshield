@@ -3,6 +3,8 @@ import cors from 'cors';
 import { createServer, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
 import type { Detection, Event } from './types.js';
 import { TACTIC_BY_ID } from './tactics.js';
 import { ANALYST_SYSTEM, buildGrandmaSystem, buildGuardianCoachSystem, buildGuardianTakeoverSystem, fenceCallerText } from './prompts.js';
@@ -631,6 +633,26 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
       return result.reply ?? null;
     },
   });
+
+  // In production (SERVE_WEB=1), serve the built web app from this same origin so
+  // the dashboard, /api and /ws all share one host — no CORS, and WSS just works
+  // behind DigitalOcean's TLS. Registered last so it never shadows the API routes.
+  if (process.env.SERVE_WEB === '1') {
+    const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), 'apps/web/dist');
+    if (fs.existsSync(path.join(webDist, 'index.html'))) {
+      app.use(express.static(webDist));
+      app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path === '/health') {
+          next();
+          return;
+        }
+        res.sendFile(path.join(webDist, 'index.html'));
+      });
+      log.info(`Serving web build from ${webDist}`);
+    } else {
+      log.warn(`SERVE_WEB=1 but no web build at ${webDist} — run "npm run build" first`);
+    }
+  }
 
   return { app, server, wss, sessions, telegram };
 }
