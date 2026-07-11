@@ -670,11 +670,12 @@ button { font-family: inherit; }
 
 /* ---------- landing: telegram presence panel ---------- */
 .telegram-panel {
-  display: flex; align-items: center; gap: 1rem; margin-top: 1.4rem; padding: 0.9rem 1.1rem;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin-top: 1.4rem; padding: 0.9rem 1.1rem;
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg);
   backdrop-filter: blur(8px); max-width: 30rem;
 }
-.telegram-panel-copy { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.telegram-panel-copy { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; flex: 1; }
 .telegram-panel-eyebrow { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--muted); }
 .telegram-panel-eyebrow svg { color: var(--guardian); }
 .telegram-panel-handle { font-size: 1.05rem; font-weight: 700; color: var(--text); text-decoration: none; }
