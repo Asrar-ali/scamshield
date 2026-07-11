@@ -1,4 +1,5 @@
 import { useSpeechInput } from '../hooks/useSpeechInput';
+import { MicIcon, SendIcon } from './icons';
 
 interface ComposerProps {
   value: string;
@@ -7,42 +8,76 @@ interface ComposerProps {
   onGiveUp: () => void;
   disabled: boolean;
   busy: boolean;
+  /** Show quick-start suggestion chips (first turn only). */
+  showSuggestions: boolean;
 }
 
-export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy }: ComposerProps) {
+const SUGGESTIONS = [
+  "You've won a prize — I just need a small fee…",
+  'This is the CRA. There is a warrant for your arrest.',
+  "Grandma, it's me — I'm in trouble and need money.",
+];
+
+export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, showSuggestions }: ComposerProps) {
   const speech = useSpeechInput({
     onInterim: (text) => onChange(text),
     onFinal: (text) => onSubmit(text),
   });
 
   return (
-    <div className="composer">
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
-        placeholder="Say something to Rose… (you are the scammer)"
-        disabled={disabled || busy}
-        autoFocus
-      />
-      {speech.supported && (
+    <div className="composer-shell">
+      {showSuggestions && (
+        <div className="suggestions" aria-label="Quick-start scam openers">
+          <span className="suggestions-label">Try an opener</span>
+          {SUGGESTIONS.map((s) => (
+            <button key={s} type="button" className="suggestion-chip" onClick={() => onChange(s)} disabled={disabled || busy}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="composer">
+        <div className="composer-input-wrap">
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
+            placeholder="Say something to Rose… you are the scammer"
+            disabled={disabled || busy}
+            autoFocus
+          />
+        </div>
+
+        {speech.supported && (
+          <button
+            type="button"
+            className={`mic-btn ${speech.listening ? 'recording' : ''}`}
+            onClick={speech.toggle}
+            disabled={disabled}
+            title={speech.listening ? 'Stop recording' : 'Speak your line'}
+            aria-pressed={speech.listening}
+            aria-label={speech.listening ? 'Stop recording' : 'Speak your line'}
+          >
+            <MicIcon width={18} height={18} />
+            <span className="mic-label">{speech.listening ? 'Listening…' : 'Speak'}</span>
+          </button>
+        )}
+
         <button
           type="button"
-          className={`mic-btn ${speech.listening ? 'recording' : ''}`}
-          onClick={speech.toggle}
-          disabled={disabled}
-          title={speech.listening ? 'Stop recording' : 'Hold-to-talk (click to toggle)'}
-          aria-pressed={speech.listening}
+          className="send-btn"
+          onClick={() => onSubmit()}
+          disabled={disabled || busy || !value.trim()}
         >
-          {speech.listening ? '● Recording' : '🎤'}
+          <SendIcon width={17} height={17} />
+          Send
         </button>
-      )}
-      <button type="button" className="primary" onClick={() => onSubmit()} disabled={disabled || busy || !value.trim()}>
-        {busy ? '…' : 'Send'}
-      </button>
-      <button type="button" className="give-up-btn" onClick={onGiveUp} disabled={disabled}>
-        Give up
-      </button>
+
+        <button type="button" className="give-up-btn" onClick={onGiveUp} disabled={disabled}>
+          Give up
+        </button>
+      </div>
     </div>
   );
 }

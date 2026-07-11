@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchTts, type TtsRole } from '../lib/api';
 
 interface QueueItem {
@@ -51,8 +51,16 @@ export function useVoiceOutput(muted: boolean) {
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
+  // Exposed so the UI can render a speaking indicator (waveform / pulsing ring)
+  // while Rose or the guardian is actually voicing a line. Purely additive —
+  // the queue/enqueue behaviour is unchanged.
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   useEffect(() => {
-    if (muted) window.speechSynthesis?.cancel();
+    if (muted) {
+      window.speechSynthesis?.cancel();
+      setIsSpeaking(false);
+    }
   }, [muted]);
 
   const drain = useCallback(async () => {
@@ -62,10 +70,12 @@ export function useVoiceOutput(muted: boolean) {
       const item = queueRef.current.shift();
       if (!item) break;
       if (mutedRef.current) continue;
+      setIsSpeaking(true);
       const blob = await fetchTts(item.text, item.role);
       if (blob) await playBlob(blob);
       else await speakWithBrowser(item.text, item.role);
     }
+    setIsSpeaking(false);
     drainingRef.current = false;
   }, []);
 
@@ -77,5 +87,5 @@ export function useVoiceOutput(muted: boolean) {
     [drain],
   );
 
-  return { enqueue };
+  return { enqueue, isSpeaking };
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchLeaderboard, type LeaderboardEntry } from '../lib/api';
 
 const POLL_INTERVAL_MS = 30_000;
+const MEDALS = ['gold', 'silver', 'bronze'];
 
 interface LeaderboardProps {
   /** Bump to force an immediate refetch (e.g. right after a session ends). */
@@ -33,14 +34,18 @@ export function Leaderboard({ refreshSignal }: LeaderboardProps) {
 
   return (
     <div className="panel leaderboard-panel">
-      <h2>Scammer Leaderboard — turns survived before getting caught</h2>
+      <div className="panel-head">
+        <h2>Leaderboard</h2>
+        <span className="lb-subtitle">turns survived</span>
+      </div>
       <div className="leaderboard">
-        {loaded && sorted.length === 0 && <p className="empty">No attempts yet.</p>}
+        {loaded && sorted.length === 0 && <p className="empty">No attempts yet — be the first.</p>}
         {!loaded && <p className="empty">Loading…</p>}
-        {sorted.map((e) => (
-          <div key={e.sessionId} className="leaderboard-row">
+        {sorted.map((e, i) => (
+          <div key={e.sessionId} className={`leaderboard-row ${i < 3 ? `rank-${MEDALS[i]}` : ''}`}>
+            <span className="lb-rank">{i + 1}</span>
             <span className="lb-alias">{e.alias || 'Anonymous Scammer'}</span>
-            <span className="lb-turns">{e.turns} turns</span>
+            <span className="lb-turns">{e.turns}</span>
             <span className={`lb-outcome lb-${e.outcome}`}>{e.outcome === 'caught' ? 'Caught' : 'Gave up'}</span>
           </div>
         ))}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Event } from './types';
 import { Header, type CallState } from './components/Header';
+import { Landing } from './components/Landing';
 import { Transcript, type Line, type Outcome } from './components/Transcript';
 import { RiskGauge } from './components/RiskGauge';
 import { TacticsPanel, type TacticHit } from './components/TacticsPanel';
@@ -157,35 +158,45 @@ export default function App() {
     });
   }, []);
 
+  const inCall = callState !== 'idle';
+
   return (
-    <div className="app">
+    <div className={`app ${outcome === 'caught' ? 'app--caught' : ''}`}>
+      <div className="app-bg" aria-hidden="true" />
       <TakeoverFlash trigger={takeoverTrigger} />
       <FamilyAlertToast toasts={toasts} onDismiss={dismissToast} />
       <Header connected={connected} callState={callState} elapsed={elapsed} muted={muted} onToggleMute={toggleMute} />
 
-      <main>
-        <Transcript
-          lines={lines}
-          live={callState === 'live'}
-          ended={callState === 'ended'}
-          outcome={outcome}
-          sessionActive={sessionId !== null}
-          startBusy={startBusy}
-          onStart={startCall}
-          input={input}
-          onInputChange={setInput}
-          onSubmit={submitTurn}
-          onGiveUp={giveUp}
-          turnBusy={turnBusy}
-        />
+      {!inCall ? (
+        <Landing busy={startBusy} onStart={startCall} />
+      ) : (
+        <main className="call-layout">
+          <Transcript
+            lines={lines}
+            live={callState === 'live'}
+            ended={callState === 'ended'}
+            outcome={outcome}
+            sessionActive={sessionId !== null}
+            startBusy={startBusy}
+            onStart={startCall}
+            input={input}
+            onInputChange={setInput}
+            onSubmit={submitTurn}
+            onGiveUp={giveUp}
+            turnBusy={turnBusy}
+            connected={connected}
+            speaking={voice.isSpeaking}
+            elapsed={elapsed}
+          />
 
-        <section className="side">
-          <RiskGauge risk={risk} />
-          <TacticsPanel hits={hits} />
-          <InterventionsPanel interventions={interventions} />
-          <Leaderboard refreshSignal={leaderboardRefresh} />
-        </section>
-      </main>
+          <section className="side">
+            <RiskGauge risk={risk} />
+            <TacticsPanel hits={hits} />
+            <InterventionsPanel interventions={interventions} />
+            <Leaderboard refreshSignal={leaderboardRefresh} />
+          </section>
+        </main>
+      )}
     </div>
   );
 }
