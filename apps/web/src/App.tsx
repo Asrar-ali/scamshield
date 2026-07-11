@@ -202,6 +202,13 @@ export default function App() {
   // the socket lifecycle + reconnect; this stays a pure event→state reducer so a
   // dropped/reconnected socket never needs special handling here.
   const handleEvent = useCallback((event: Event) => {
+    // Session scoping: the server stamps every per-session event with `sid`.
+    // Ignore events from any session other than the one this dashboard has
+    // adopted, so a second concurrent caller (another Telegram chat, a second
+    // tab) can't interleave its transcript/voice/tactics onto this screen.
+    // 'session' events are exempt — they drive adoption and teardown.
+    const sid = (event as { sid?: string }).sid;
+    if (event.type !== 'session' && sid && sid !== sessionIdRef.current) return;
     switch (event.type) {
         case 'utterance':
           setLines((prev) => [...prev, { role: event.role, text: event.text, ts: event.ts }]);
@@ -251,6 +258,7 @@ export default function App() {
               setEndedAt(null);
               setReplay(null);
               setInput('');
+              sessionIdRef.current = event.id; // adopt synchronously so subsequent events pass the filter
               setSessionId(event.id);
               setSessionChannel('telegram');
               setSessionAlias(event.alias ?? 'Telegram caller');
@@ -287,6 +295,7 @@ export default function App() {
     setSessionAlias(alias || 'Anonymous Scammer');
     try {
       const data = await startSession(alias || 'Anonymous Scammer');
+      sessionIdRef.current = data.sessionId; // adopt synchronously so the event filter matches immediately
       setSessionId(data.sessionId);
       setStartedAt(Date.now());
       setCallState('live');

@@ -61,10 +61,13 @@ describe('buildGuardianTakeoverSystem', () => {
     expect(system).not.toContain('taking over the call from Rose');
   });
 
-  it('keeps the takeover instructions intact', () => {
+  it('keeps the takeover instructions intact and makes no false authority-reporting claim', () => {
     const system = buildGuardianTakeoverSystem('Gigi');
     expect(system).toContain('fraud protection');
-    expect(system).toContain('call is terminated and reported');
+    expect(system).toContain('ending the call');
+    expect(system).toContain('family has been alerted');
+    // Must not instruct the model to claim the scam was reported to authorities — that would be a lie.
+    expect(system).not.toContain('reported');
   });
 });
 

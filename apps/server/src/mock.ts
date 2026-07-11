@@ -75,5 +75,5 @@ export function mockCoach(): string {
 }
 
 export function mockTakeover(tactics: string[]): string {
-  return `This is ScamShield, the fraud protection on this line. I have detected ${tactics.join(', ')} in this call. The call is now terminated and has been reported. The family has been alerted.`;
+  return `This is ScamShield, the fraud protection on this line. I have detected ${tactics.join(', ')} on this call. I am ending the call now, and the family has been alerted.`;
 }

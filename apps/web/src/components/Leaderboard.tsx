@@ -62,12 +62,17 @@ export function Leaderboard({ refreshSignal, onReplay }: LeaderboardProps) {
             Threat Intel
           </button>
         </div>
-        {view === 'leaderboard' && <span className="lb-subtitle">turns survived</span>}
+        {view === 'leaderboard' && <span className="lb-subtitle">turns before defused</span>}
       </div>
 
       {view === 'leaderboard' ? (
         <div className="leaderboard">
-          {loaded && sorted.length === 0 && <p className="empty">No attempts yet — be the first.</p>}
+          {loaded && sorted.length > 0 && (
+            <p className="lb-record">
+              {sorted.length} scam {sorted.length === 1 ? 'attempt' : 'attempts'} · 0 got through
+            </p>
+          )}
+          {loaded && sorted.length === 0 && <p className="empty">No scam attempts yet.</p>}
           {!loaded && <p className="empty">Loading…</p>}
           {sorted.map((e, i) => (
             <div

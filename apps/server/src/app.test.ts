@@ -708,7 +708,7 @@ describe('server integration with Telegram enabled', () => {
     });
   });
 
-  it('starts a fresh session for the next message after a takeover ends the previous one', async () => {
+  it('blocks further messages on a chat after a takeover, instead of resurrecting Rose', async () => {
     vi.useFakeTimers();
     process.env.TELEGRAM_BOT_TOKEN = 'test-token';
 
@@ -746,9 +746,16 @@ describe('server integration with Telegram enabled', () => {
     }
 
     const allSessions = [...built.sessions.values()];
-    expect(allSessions.length).toBeGreaterThanOrEqual(2);
-    expect(allSessions.some((s) => s.ended && s.outcome === 'caught')).toBe(true);
-    expect(allSessions.some((s) => !s.ended)).toBe(true);
+    // The takeover ends the one session and blocks the chat — the post-takeover
+    // message must NOT spin up a fresh, un-ended session ("the call is ended" stays true).
+    expect(allSessions.length).toBe(1);
+    expect(allSessions[0].ended && allSessions[0].outcome === 'caught').toBe(true);
+    // The message after the takeover is stonewalled with the protected-line reply,
+    // not answered by a resurrected Rose.
+    const sendBodies = fetchMock.mock.calls
+      .filter((c) => String(c[0]).includes('/sendMessage'))
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string).text as string);
+    expect(sendBodies.some((t) => t.includes('protected by ScamShield'))).toBe(true);
   });
 });
 
@@ -951,5 +958,44 @@ describe('server abuse and quota guards', () => {
     expect(sendBodies.some((t) => t.includes("you're talking so fast"))).toBe(true);
     // The flooded second message must never have reached Gemini.
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(':generateContent'))).toBe(false);
+  });
+});
+
+describe('operator token auth on mutating endpoints', () => {
+  let built: BuiltApp;
+  let baseUrl: string;
+  const settingsBody = { protectedName: 'Rose', notifyOn: 'takeover' as const, contacts: [] };
+
+  beforeEach(async () => {
+    process.env.SCAMSHIELD_OPERATOR_TOKEN = 'secret';
+    built = buildApp();
+    await new Promise<void>((resolve) => built.server.listen(0, resolve));
+    baseUrl = `http://localhost:${(built.server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.SCAMSHIELD_OPERATOR_TOKEN;
+    await new Promise<void>((resolve) => built.server.close(() => resolve()));
+  });
+
+  it('401s PUT /api/settings without the token', async () => {
+    const res = await request(baseUrl).put('/api/settings').send(settingsBody);
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts PUT /api/settings with the correct token', async () => {
+    const res = await request(baseUrl).put('/api/settings').set('x-scamshield-token', 'secret').send(settingsBody);
+    expect(res.status).toBe(200);
+  });
+
+  it('401s POST /api/alert-test without the token', async () => {
+    const res = await request(baseUrl).post('/api/alert-test');
+    expect(res.status).toBe(401);
+  });
+
+  it('leaves read + gameplay endpoints open (start/turn need no token)', async () => {
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    expect(start.status).toBe(200);
+    expect((await request(baseUrl).get('/api/settings')).status).toBe(200);
   });
 });

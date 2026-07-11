@@ -38,6 +38,14 @@ describe('parseUpdates', () => {
     expect(nextOffset).toBe(11);
   });
 
+  it('carries the message date through so backlog can be filtered', () => {
+    const { parsed } = parseUpdates({
+      ok: true,
+      result: [{ update_id: 3, message: { chat: { id: 5, type: 'private', first_name: 'Ann' }, text: 'hi', date: 1_700_000_000 } }],
+    });
+    expect(parsed[0].date).toBe(1_700_000_000);
+  });
+
   it('advances the offset past a filtered-out update (group chat)', () => {
     const { parsed, nextOffset } = parseUpdates({
       ok: true,

@@ -32,7 +32,7 @@ function formatAlertText(ctx: AlertContext): string {
     `Risk score: ${Math.round(ctx.risk)}/100`,
     topTactics.length > 0 ? `Detected tactics: ${topTactics.join(', ')}` : 'Detected tactics: none recorded',
     `Time: ${when}`,
-    'ScamShield terminated the call.',
+    'ScamShield ended the call to protect them.',
   ].join('\n');
 }
 

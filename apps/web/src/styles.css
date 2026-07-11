@@ -494,6 +494,7 @@ button { font-family: inherit; }
 
 /* leaderboard */
 .lb-subtitle { font-family: var(--font-mono); font-size: 0.62rem; color: var(--muted-2); letter-spacing: 0.06em; }
+.lb-record { font-family: var(--font-mono); font-size: 0.72rem; color: var(--grandma); letter-spacing: 0.04em; margin-bottom: 0.5rem; }
 .leaderboard { display: flex; flex-direction: column; gap: 0.4rem; max-height: 240px; overflow-y: auto; }
 .leaderboard-row {
   display: grid; grid-template-columns: auto 1fr auto auto; gap: 0.6rem; align-items: center;

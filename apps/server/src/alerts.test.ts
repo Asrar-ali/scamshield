@@ -55,7 +55,7 @@ describe('dispatchAlerts', () => {
     expect(text).toContain('Rose');
     expect(text).toContain('92');
     expect(text).toContain('Payment Redirection');
-    expect(text).toContain('ScamShield terminated the call.');
+    expect(text).toContain('ScamShield ended the call to protect them.');
   });
 
   it('marks telegram delivery as failed (not thrown) when TELEGRAM_BOT_TOKEN is unset', async () => {

@@ -25,6 +25,8 @@ interface TelegramMessage {
   chat: TelegramChat;
   text?: string;
   from?: { first_name?: string };
+  /** Unix seconds the message was sent — used to drop pre-startup backlog. */
+  date?: number;
 }
 
 interface TelegramUpdate {
@@ -42,6 +44,8 @@ export interface ParsedUpdate {
   chatId: string;
   name: string;
   text: string;
+  /** Unix seconds from Telegram, when available. */
+  date?: number;
 }
 
 export interface ParsedUpdatesResult {
@@ -63,7 +67,7 @@ export function parseUpdates(data: GetUpdatesResponse): ParsedUpdatesResult {
     if (!msg?.chat || msg.chat.type !== 'private' || !msg.text?.trim()) continue;
     const chatId = String(msg.chat.id);
     const name = msg.chat.first_name ?? msg.from?.first_name ?? 'Family';
-    parsed.push({ chatId, name, text: msg.text.trim() });
+    parsed.push({ chatId, name, text: msg.text.trim(), date: msg.date });
   }
   return { parsed, nextOffset };
 }
@@ -121,6 +125,10 @@ export function startTelegramChannel(callbacks: TelegramCallbacks): TelegramChan
   let botUsername: string | null = null;
   let stopped = false;
   let offset = 0;
+  // Messages sent before the server came up are backlog — skip them so a restart
+  // doesn't replay old chats as phantom live calls. Updates without a date
+  // (e.g. in tests) are always processed.
+  const startedAtSec = Math.floor(Date.now() / 1000);
 
   const channel: TelegramChannel = {
     getBotUsername: () => botUsername,
@@ -153,6 +161,10 @@ export function startTelegramChannel(callbacks: TelegramCallbacks): TelegramChan
         const { parsed, nextOffset } = parseUpdates(data);
         if (nextOffset !== null) offset = nextOffset;
         for (const update of parsed) {
+          if (update.date !== undefined && update.date < startedAtSec) {
+            log.info(`Telegram: skipping backlog message from chat ${update.chatId} (sent before startup)`);
+            continue;
+          }
           await processUpdate(update);
         }
         backoff = INITIAL_BACKOFF_MS;

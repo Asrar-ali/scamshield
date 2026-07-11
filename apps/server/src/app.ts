@@ -63,6 +63,8 @@ export const DEFAULT_LIMITS: Limits = {
 // The in-character brush-off used when a Telegram chat is talking faster than the
 // per-chat turn throttle allows — stays in Rose's voice and never touches Gemini.
 const TELEGRAM_RATE_LIMIT_REPLY = "Goodness, dear, you're talking so fast — give me a moment to catch my breath.";
+const TELEGRAM_BLOCKED_REPLY =
+  'This number is protected by ScamShield. A scam attempt on this line was already detected and the call was ended. Send /start to begin a new demo call.';
 
 const DETECTIONS_SCHEMA = {
   type: 'OBJECT',
@@ -143,6 +145,10 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   const settingsManager = createSettingsManager(store);
   // chatId -> sessionId, only tracked while that Telegram conversation's session is still active
   const chatSessions = new Map<string, string>();
+  // Telegram chats where a takeover already fired. Further messages are stonewalled
+  // (no new session, no Gemini) so "the call is ended" stays true — instead of a
+  // fresh session resurrecting Rose. Cleared by /start to allow a re-demo.
+  const blockedChats = new Set<string>();
 
   const limits: Limits = { ...DEFAULT_LIMITS, ...options.limits };
   const now = options.now ?? Date.now;
@@ -171,14 +177,31 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   });
 
   const app = express();
-  app.use(cors());
+  // Lock CORS to a single origin when SCAMSHIELD_ALLOWED_ORIGIN is set (production);
+  // otherwise allow all so the local/demo dashboard just works.
+  const allowedOrigin = process.env.SCAMSHIELD_ALLOWED_ORIGIN;
+  app.use(cors(allowedOrigin ? { origin: allowedOrigin } : {}));
   app.use(express.json());
+
+  // Optional operator auth for mutating endpoints (reconfiguring alert contacts,
+  // firing test alerts). Unset by default so the walk-up demo works; set
+  // SCAMSHIELD_OPERATOR_TOKEN on a public deployment and send it as x-scamshield-token.
+  const operatorToken = process.env.SCAMSHIELD_OPERATOR_TOKEN;
+  const requireOperator = (req: express.Request, res: express.Response): boolean => {
+    if (!operatorToken) return true;
+    if (req.get('x-scamshield-token') === operatorToken) return true;
+    res.status(401).json({ error: 'operator token required' });
+    return false;
+  };
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   function broadcast(event: Event, sessionId?: string) {
-    const payload = JSON.stringify(event);
+    // Stamp the originating session id onto the wire payload so a dashboard
+    // that has adopted one session can ignore events from any other concurrent
+    // session (Telegram callers, a second tab) instead of interleaving them.
+    const payload = JSON.stringify(sessionId ? { ...event, sid: sessionId } : event);
     for (const client of wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(payload);
     }
@@ -488,6 +511,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   });
 
   app.put('/api/settings', (req, res) => {
+    if (!requireOperator(req, res)) return;
     const result = validateSettings(req.body);
     if (!result.ok) {
       res.status(400).json({ error: result.error });
@@ -540,7 +564,8 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     });
   });
 
-  app.post('/api/alert-test', async (_req, res) => {
+  app.post('/api/alert-test', async (req, res) => {
+    if (!requireOperator(req, res)) return;
     // Cooldown + only ever targets already-configured contacts (req.body is ignored),
     // so this can never be turned into an open relay for arbitrary destinations.
     const decision = alertTestLimiter.check(ALERT_TEST_KEY);
@@ -565,8 +590,15 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     async onMessage(chatId, name, text) {
       if (text.trim() === '/start') {
         chatSessions.delete(chatId);
+        blockedChats.delete(chatId);
         const personaName = settingsManager.get().persona.name;
         return `Hello dear, this is ${personaName}! I don't have my glasses on — who's calling, and what's this about?`;
+      }
+
+      // A takeover already ended a call on this chat — stay ended instead of
+      // spinning up a fresh session and letting Rose answer again.
+      if (blockedChats.has(chatId)) {
+        return TELEGRAM_BLOCKED_REPLY;
       }
 
       // Per-chat flood guard: reply in character and never reach Gemini when this
@@ -592,6 +624,8 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
       const result = await runTurn(session, utterance);
       if (result.ended) {
         chatSessions.delete(chatId);
+        // A caught takeover blocks the chat; a plain end (rare on Telegram) does not.
+        if (session.outcome === 'caught') blockedChats.add(chatId);
         return result.guardianLine ?? null;
       }
       return result.reply ?? null;
