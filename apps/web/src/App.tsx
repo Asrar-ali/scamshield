@@ -200,9 +200,19 @@ export default function App() {
 
   useEffect(() => {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
+    // Guard against React StrictMode's dev double-mount: if this effect is torn
+    // down (its cleanup ran), the socket it created must never deliver events —
+    // otherwise a transient second connection double-fires enqueue and every
+    // spoken line plays twice.
+    let live = true;
+    ws.onopen = () => {
+      if (live) setConnected(true);
+    };
+    ws.onclose = () => {
+      if (live) setConnected(false);
+    };
     ws.onmessage = (msg) => {
+      if (!live) return;
       const event = JSON.parse(msg.data as string) as Event;
       switch (event.type) {
         case 'utterance':
@@ -269,7 +279,11 @@ export default function App() {
           break;
       }
     };
-    return () => ws.close();
+    return () => {
+      live = false;
+      ws.onmessage = null;
+      ws.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pushToast]);
 
