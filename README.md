@@ -13,9 +13,7 @@ Built at cuHacking 7 (July 10–12, 2026, Carleton University).
 | Doc | What's in it |
 |---|---|
 | [docs/PROBLEM.md](docs/PROBLEM.md) | Problem statement + quantified impact numbers |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, agent roles, voice-pipeline decision |
-| [docs/PLAN.md](docs/PLAN.md) | Descope ladder, team split, timeline to submission |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Running decision log — append as we decide |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, agent roles, voice pipeline |
 
 ## Structure
 
