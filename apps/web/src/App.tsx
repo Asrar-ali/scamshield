@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Event } from './types';
 import { Header, type CallState, type AiStatus } from './components/Header';
 import { Landing } from './components/Landing';
@@ -11,6 +11,14 @@ import { FamilyAlertToast, type AlertToast } from './components/FamilyAlertToast
 import { DeliveryToast, type DeliveryToastItem } from './components/DeliveryToast';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { Leaderboard } from './components/Leaderboard';
+import { Autopsy } from './components/Autopsy';
+import {
+  buildAutopsyFromLive,
+  buildAutopsyFromEvents,
+  type AutopsyData,
+  type RiskSample,
+  type InterventionMoment,
+} from './lib/autopsy';
 import { useElapsedTimer } from './hooks/useElapsedTimer';
 import { useVoiceOutput } from './hooks/useVoiceOutput';
 import {
@@ -19,6 +27,7 @@ import {
   endSession,
   fetchSettings,
   fetchTelegramStatus,
+  fetchSessionEvents,
   type Settings,
   type TelegramStatus,
 } from './lib/api';
@@ -59,6 +68,13 @@ export default function App() {
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(DISCONNECTED_TELEGRAM);
   const [deliveryToasts, setDeliveryToasts] = useState<DeliveryToastItem[]>([]);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  // Bounded to the current session — the risk trace feeding the sparkline and
+  // the Autopsy timeline. Reset on every new session.
+  const [riskSamples, setRiskSamples] = useState<RiskSample[]>([]);
+  const [endedAt, setEndedAt] = useState<number | null>(null);
+  // Replay: an Autopsy built from a past session's fetched events, shown in the
+  // left column in place of the live/landing view until dismissed.
+  const [replay, setReplay] = useState<AutopsyData | null>(null);
 
   const toastIdRef = useRef(0);
   const deliveryToastIdRef = useRef(0);
@@ -74,6 +90,49 @@ export default function App() {
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  // Stamp the end time once, when the call settles, so the Autopsy duration is
+  // fixed rather than ticking with re-renders.
+  useEffect(() => {
+    if (callState === 'ended') setEndedAt((prev) => prev ?? Date.now());
+  }, [callState]);
+
+  // Coach/takeover moments for the timeline, pulled from the intervention feed.
+  const interventionMoments = useMemo<InterventionMoment[]>(
+    () =>
+      feed
+        .filter((f): f is Extract<FeedItem, { kind: 'intervention' }> => f.kind === 'intervention')
+        .map((f) => ({ level: f.level, ts: f.ts }))
+        .filter((m): m is InterventionMoment => m.level !== 'alert'),
+    [feed],
+  );
+
+  // The forensic report for the current call. Built only once the call has
+  // ended; outcome falls back to inference when the server ended the session
+  // without the dashboard setting one explicitly.
+  const liveAutopsy = useMemo<AutopsyData | null>(() => {
+    if (callState !== 'ended' || !startedAt) return null;
+    const resolvedOutcome: 'caught' | 'gave_up' =
+      outcome === 'caught' || interventionMoments.some((i) => i.level === 'takeover')
+        ? 'caught'
+        : 'gave_up';
+    return buildAutopsyFromLive({
+      alias: sessionAlias ?? 'Anonymous Scammer',
+      outcome: resolvedOutcome,
+      startTs: startedAt,
+      endTs: endedAt ?? Date.now(),
+      turns: lines.filter((l) => l.role === 'scammer').length,
+      riskSamples,
+      hits: hits.map((h) => ({ tactic: h.tactic, evidence: h.evidence, ts: h.ts })),
+      interventions: interventionMoments,
+    });
+  }, [callState, startedAt, endedAt, outcome, sessionAlias, lines, riskSamples, hits, interventionMoments]);
+
+  const openReplay = useCallback(async (id: string, alias: string) => {
+    const events = await fetchSessionEvents(id);
+    const data = buildAutopsyFromEvents(events, alias || 'Anonymous Scammer');
+    if (data) setReplay(data);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +214,7 @@ export default function App() {
           break;
         case 'risk':
           setRisk(event.score);
+          setRiskSamples((prev) => [...prev, { score: event.score, ts: event.ts }]);
           break;
         case 'intervention':
           setFeed((prev) => [{ kind: 'intervention', level: event.level, text: event.text, ts: event.ts }, ...prev]);
@@ -189,6 +249,9 @@ export default function App() {
               setDeliveryToasts([]);
               setOutcome(null);
               setRisk(0);
+              setRiskSamples([]);
+              setEndedAt(null);
+              setReplay(null);
               setInput('');
               setSessionId(event.id);
               setSessionChannel('telegram');
@@ -219,6 +282,9 @@ export default function App() {
     setDeliveryToasts([]);
     setOutcome(null);
     setRisk(0);
+    setRiskSamples([]);
+    setEndedAt(null);
+    setReplay(null);
     setInput('');
     setSessionChannel('dashboard');
     setSessionAlias(alias || 'Anonymous Scammer');
@@ -302,35 +368,63 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      {!inCall ? (
+      {replay ? (
+        <main className="call-layout">
+          <div className="left-stack replay-stack">
+            <div className="replay-bar">
+              <button type="button" className="replay-back" onClick={() => setReplay(null)}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M15 5l-7 7 7 7" />
+                </svg>
+                Back
+              </button>
+              <span className="replay-tag">Replay</span>
+            </div>
+            <Autopsy data={replay} />
+          </div>
+          <section className="side">
+            <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
+          </section>
+        </main>
+      ) : !inCall ? (
         <Landing busy={startBusy} onStart={startCall} telegramStatus={telegramStatus} />
       ) : (
         <main className="call-layout">
-          <Transcript
-            lines={lines}
-            live={callState === 'live'}
-            ended={callState === 'ended'}
-            outcome={outcome}
-            sessionActive={sessionId !== null}
-            startBusy={startBusy}
-            onStart={startCall}
-            input={input}
-            onInputChange={setInput}
-            onSubmit={submitTurn}
-            onGiveUp={giveUp}
-            turnBusy={turnBusy}
-            connected={connected}
-            speaking={voice.isSpeaking}
-            elapsed={elapsed}
-            sessionChannel={sessionChannel}
-            sessionAlias={sessionAlias}
-          />
+          <div className={`left-stack ${callState === 'ended' ? 'left-stack--ended' : ''}`}>
+            <Transcript
+              lines={lines}
+              live={callState === 'live'}
+              ended={callState === 'ended'}
+              outcome={outcome}
+              sessionActive={sessionId !== null}
+              startBusy={startBusy}
+              onStart={startCall}
+              input={input}
+              onInputChange={setInput}
+              onSubmit={submitTurn}
+              onGiveUp={giveUp}
+              turnBusy={turnBusy}
+              connected={connected}
+              speaking={voice.isSpeaking}
+              elapsed={elapsed}
+              sessionChannel={sessionChannel}
+              sessionAlias={sessionAlias}
+            />
+            {callState === 'ended' && liveAutopsy && <Autopsy data={liveAutopsy} />}
+          </div>
 
           <section className="side">
-            <RiskGauge risk={risk} />
+            <RiskGauge
+              risk={risk}
+              samples={riskSamples}
+              markers={hits.map((h) => ({ tactic: h.tactic, ts: h.ts }))}
+              interventions={interventionMoments}
+              startTs={startedAt}
+              endTs={callState === 'live' ? null : endedAt}
+            />
             <TacticsPanel hits={hits} />
             <InterventionsPanel items={feed} />
-            <Leaderboard refreshSignal={leaderboardRefresh} />
+            <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
           </section>
         </main>
       )}

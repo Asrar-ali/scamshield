@@ -29,7 +29,9 @@ Generative voice AI cuts both ways: scammers already clone grandchildren's voice
 
 ## Who it's for
 
-- **Seniors and their families** (consumer): a call-screening bodyguard on grandma's line, opt-in, with family alerts.
+ScamShield shipped as a configurable protection product, not just a live-demo toy: a family sets up a persona (name, age, city, grandkid, quirks), a sensitivity level, and real contacts, and the guardian dispatches genuine alerts over Telegram and/or macOS iMessage when a call crosses threshold — not a mocked notification.
+
+- **Seniors and their families** (consumer): a call-screening bodyguard on grandma's line, opt-in, with real family alerts and a persisted record of every attempt (analytics + session replay/"autopsy") so a family can see what actually happened on a call.
 - **Telecoms & banks** (B2B): tactic-level risk signal on flagged lines — far richer than number reputation.
 
 ## One-liner

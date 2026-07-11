@@ -9,6 +9,7 @@ export type TacticId =
   | 'verification_blocking'
   | 'remote_access'
   | 'info_harvesting'
+  | 'prompt_injection'
   | 'generic_pressure';
 
 export type Role = 'scammer' | 'grandma' | 'guardian';
@@ -43,5 +44,27 @@ export const TACTIC_LABELS: Record<TacticId, string> = {
   verification_blocking: 'Verification Blocking',
   remote_access: 'Remote Access Request',
   info_harvesting: 'Info Harvesting',
+  prompt_injection: 'AI Manipulation',
   generic_pressure: 'Suspicious Pressure',
 };
+
+/** A distinct hue per tactic, shared across the tactics rail, timeline markers,
+ * and the threat-intel bars so a tactic reads as the same color everywhere.
+ * Mirrors the map in components/TacticsPanel.tsx. */
+export const TACTIC_HUE: Record<TacticId, string> = {
+  urgency_pressure: '#ffb020',
+  authority_impersonation: '#a78bfa',
+  payment_redirection: '#f472b6',
+  isolation_secrecy: '#60a5fa',
+  emotional_manipulation: '#fb7185',
+  trust_building: '#34d399',
+  verification_blocking: '#f59e0b',
+  remote_access: '#22d3ee',
+  info_harvesting: '#c084fc',
+  prompt_injection: '#f43f5e',
+  generic_pressure: '#94a3b8',
+};
+
+/** Risk-score cutoffs mirrored from apps/server/src/risk.ts and RiskGauge —
+ * the coach and takeover intervention thresholds. */
+export const RISK_THRESHOLDS = { coach: 45, takeover: 80 } as const;

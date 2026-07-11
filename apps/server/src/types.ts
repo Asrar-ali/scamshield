@@ -8,6 +8,7 @@ export type TacticId =
   | 'verification_blocking'
   | 'remote_access'
   | 'info_harvesting'
+  | 'prompt_injection'
   | 'generic_pressure';
 
 export type Role = 'scammer' | 'grandma' | 'guardian';
@@ -35,6 +36,7 @@ export interface Detection {
 
 export type NotifyOn = 'coach' | 'takeover';
 export type ContactChannel = 'telegram' | 'imessage';
+export type Sensitivity = 'relaxed' | 'balanced' | 'paranoid';
 
 export interface Contact {
   id: string;
@@ -43,8 +45,25 @@ export interface Contact {
   address: string;
 }
 
+export interface VoiceSettings {
+  grandma: string;
+  guardian: string;
+}
+
+export interface PersonaSettings {
+  name: string;
+  age: number;
+  city: string;
+  grandkid: string;
+  quirks: string;
+}
+
 export interface Settings {
   protectedName: string;
   notifyOn: NotifyOn;
   contacts: Contact[];
+  model: string;
+  voices: VoiceSettings;
+  sensitivity: Sensitivity;
+  persona: PersonaSettings;
 }

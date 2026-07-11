@@ -735,3 +735,210 @@ button { font-family: inherit; }
   }
   .app-bg { animation: none; }
 }
+
+/* ---------- settings drawer: tabs ----------
+   Additive modifier — combined with the existing .settings-drawer class rather than
+   editing it, so the drawer widens slightly to fit three tabs without touching the
+   original rule. Tab switching itself is instant (no transition), independent of the
+   drawer's own open/close animation. */
+.settings-drawer--tabbed { width: min(480px, 94vw); }
+
+.settings-tabs { display: flex; gap: 0.2rem; padding: 0 1.2rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.settings-tab {
+  flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer;
+  font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.75rem 0.4rem; transition: color 0.15s, border-color 0.15s;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.is-active { color: var(--text); border-color: var(--accent); }
+.settings-tab-panel[hidden] { display: none; }
+
+/* persona editor */
+.persona-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.persona-field-full { grid-column: 1 / -1; }
+.persona-textarea {
+  width: 100%; min-height: 4.4rem; resize: vertical; background: rgba(10, 14, 24, 0.8);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md); color: var(--text);
+  padding: 0.65rem 0.85rem; font-family: inherit; font-size: 0.88rem; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.persona-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 123, 255, 0.18); }
+.persona-preview {
+  margin-top: 0.7rem; padding: 0.65rem 0.85rem; border-radius: var(--r-md); border: 1px dashed var(--border-strong);
+  background: rgba(139, 123, 255, 0.06); font-size: 0.82rem; color: var(--muted); line-height: 1.5;
+}
+
+/* sensitivity: per-option factual subtext under the existing segmented control */
+.segmented-option-desc { display: block; margin-top: 0.2rem; font-size: 0.72rem; color: var(--muted-2); font-weight: 400; }
+
+/* model picker */
+.model-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.model-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; width: 100%; text-align: left;
+  background: rgba(12, 16, 28, 0.5); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 0.65rem 0.9rem; cursor: pointer; color: var(--muted); transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.model-card:hover { border-color: var(--border-strong); color: var(--text); }
+.model-card.is-selected {
+  border-color: var(--accent); color: var(--text); background: rgba(139, 123, 255, 0.12);
+  box-shadow: 0 0 0 1px rgba(139, 123, 255, 0.25) inset;
+}
+.model-card-info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.model-card-label { font-size: 0.86rem; font-weight: 600; }
+.model-card-id { font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-card-tags { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
+.model-tag {
+  font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 0.15rem 0.4rem; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted);
+}
+.model-tag--active { color: var(--grandma); border-color: rgba(69, 209, 127, 0.35); }
+
+/* voice pickers */
+.voice-picker { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.9rem; }
+.voice-picker:last-child { margin-bottom: 0; }
+.voice-picker-label { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+.voice-picker-row { display: flex; gap: 0.5rem; }
+.voice-picker-row select {
+  flex: 1; min-width: 0; background: rgba(10, 14, 24, 0.8); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  color: var(--text); padding: 0.6rem 0.75rem; font-family: inherit; font-size: 0.86rem; cursor: pointer;
+}
+.voice-picker-row select:focus { outline: none; border-color: var(--accent); }
+.voice-picker-row select:disabled { opacity: 0.5; cursor: default; }
+.voice-preview-btn {
+  flex-shrink: 0; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(106, 168, 255, 0.12); border: 1px solid rgba(106, 168, 255, 0.4); border-radius: var(--r-md);
+  color: var(--guardian); cursor: pointer; transition: background 0.2s;
+}
+.voice-preview-btn:hover:not(:disabled) { background: rgba(106, 168, 255, 0.2); }
+.voice-preview-btn:disabled { opacity: 0.5; cursor: default; }
+.voice-preview-btn.is-playing { color: var(--grandma); border-color: rgba(69, 209, 127, 0.4); background: rgba(69, 209, 127, 0.12); }
+.voice-spinner { animation: voice-spin 0.9s linear infinite; }
+@keyframes voice-spin { to { transform: rotate(360deg); } }
+
+.settings-unavailable { font-size: 0.76rem; color: var(--muted-2); font-style: italic; }
+
+@media (max-width: 560px) {
+  .persona-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   Data layer — risk timeline, autopsy, threat intel, replay
+   (additive; reuses design tokens, no existing selector edited)
+   ============================================================ */
+
+/* ---------- risk timeline (shared SVG) ---------- */
+.risk-timeline { width: 100%; }
+.risk-timeline--spark { margin-top: 0.7rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.rt-svg { width: 100%; display: block; overflow: visible; }
+.rt-svg text { font-family: var(--font-mono); }
+.rt-area { opacity: 0.14; }
+.rt-line { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.rt-guide { stroke-width: 1; fill: none; }
+.rt-guide-coach { stroke: var(--warn); opacity: 0.4; }
+.rt-guide-takeover { stroke: var(--crit); opacity: 0.45; }
+.rt-guide-label { font-size: 8px; letter-spacing: 0.04em; fill: var(--muted-2); }
+.rt-mark { stroke-width: 1.2; }
+.rt-mark-coach { stroke: var(--warn); opacity: 0.55; }
+.rt-mark-takeover { stroke: var(--crit); opacity: 0.7; }
+.rt-mark-label { font-size: 8px; letter-spacing: 0.05em; text-transform: uppercase; fill: var(--muted); }
+.rt-mark-label-takeover { fill: var(--crit); }
+.rt-dot { stroke: var(--panel-solid); stroke-width: 2; }
+.rt-head { fill: var(--text); stroke: var(--panel-solid); stroke-width: 2; }
+.rt-axis { font-size: 8.5px; fill: var(--muted-2); }
+
+/* ---------- segmented toggle (leaderboard / threat intel) ---------- */
+.seg-toggle {
+  display: inline-flex; gap: 0.15rem; padding: 0.15rem;
+  background: rgba(10, 14, 24, 0.6); border: 1px solid var(--border); border-radius: 999px;
+}
+.seg-btn {
+  background: none; border: 0; cursor: pointer; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); padding: 0.3rem 0.6rem; transition: color 0.15s, background 0.15s;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn.is-active { color: var(--text); background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+.leaderboard-row.is-clickable { cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.leaderboard-row.is-clickable:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.leaderboard-row.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- threat intel ---------- */
+.threat-intel { display: flex; flex-direction: column; gap: 0.85rem; }
+.ti-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+.ti-stat {
+  display: flex; flex-direction: column; gap: 0.15rem; align-items: flex-start;
+  padding: 0.5rem 0.55rem; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: rgba(10, 14, 24, 0.5);
+}
+.ti-stat-value { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; color: var(--text); line-height: 1; }
+.ti-stat-label { font-size: 0.58rem; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted-2); }
+
+.ti-bars { display: flex; flex-direction: column; gap: 0.45rem; }
+.ti-bar-row { --hue: var(--muted); display: grid; grid-template-columns: 22px minmax(0, 1fr) 1.6fr auto; align-items: center; gap: 0.5rem; }
+.ti-bar-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 6px; color: var(--hue);
+  background: color-mix(in srgb, var(--hue) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hue) 32%, transparent);
+}
+.ti-bar-label { font-size: 0.78rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ti-bar-track { height: 8px; border-radius: 999px; background: rgba(120, 134, 178, 0.14); overflow: hidden; }
+.ti-bar-fill { display: block; height: 100%; border-radius: 999px 4px 4px 999px; background: var(--hue); transition: width 0.5s ease; }
+.ti-bar-count { font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ---------- left column stack (transcript + autopsy) ---------- */
+.left-stack { display: flex; flex-direction: column; min-height: 0; }
+.left-stack > .call-panel { flex: 1; min-height: 0; }
+.left-stack--ended { overflow-y: auto; gap: 1rem; padding-right: 0.2rem; }
+.left-stack--ended > .call-panel { flex: 0 0 auto; max-height: 46vh; }
+
+/* ---------- autopsy (forensic report) ---------- */
+.autopsy { padding: 1rem 1.1rem; flex-shrink: 0; }
+.autopsy-alias { font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted); }
+.autopsy-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 1rem; }
+.autopsy-stat {
+  display: flex; flex-direction: column; gap: 0.2rem; padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: rgba(10, 14, 24, 0.5);
+}
+.autopsy-stat-value { font-family: var(--font-mono); font-size: 1.35rem; font-weight: 700; line-height: 1; color: var(--text); }
+.autopsy-stat-label { font-size: 0.58rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-2); }
+.autopsy-stat--caught .autopsy-stat-value { color: var(--crit); }
+.autopsy-stat--gaveup .autopsy-stat-value { color: var(--grandma); }
+
+.autopsy-block { margin-bottom: 1rem; }
+.autopsy-block-title {
+  display: block; font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.5rem;
+}
+.autopsy-ledger { display: flex; flex-direction: column; gap: 0.4rem; }
+.autopsy-ledger-row {
+  --hue: var(--muted); display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: start; gap: 0.55rem;
+  padding: 0.5rem 0.6rem; border: 1px solid color-mix(in srgb, var(--hue) 32%, transparent);
+  border-radius: var(--r-md); background: color-mix(in srgb, var(--hue) 8%, rgba(12, 16, 28, 0.5));
+}
+.autopsy-ledger-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-top: 1px;
+  border-radius: 7px; color: var(--hue); background: color-mix(in srgb, var(--hue) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hue) 32%, transparent);
+}
+.autopsy-ledger-body { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.autopsy-ledger-name { font-weight: 700; font-size: 0.85rem; color: var(--text); }
+.autopsy-ledger-quotes { display: flex; flex-direction: column; gap: 0.15rem; }
+.autopsy-quote { font-size: 0.76rem; font-style: italic; color: var(--muted); border-left: 2px solid color-mix(in srgb, var(--hue) 50%, transparent); padding-left: 0.5rem; }
+.autopsy-ledger-count { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--hue); font-variant-numeric: tabular-nums; }
+
+.autopsy-close {
+  margin-top: 0.25rem; padding-top: 0.75rem; border-top: 1px solid var(--border);
+  font-size: 0.85rem; color: var(--text); font-weight: 600;
+}
+
+/* ---------- replay ---------- */
+.replay-stack { overflow-y: auto; gap: 0.9rem; padding-right: 0.2rem; }
+.replay-bar { display: flex; align-items: center; gap: 0.7rem; flex-shrink: 0; }
+.replay-back {
+  display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  color: var(--text); font-size: 0.82rem; font-weight: 600; padding: 0.4rem 0.7rem; transition: border-color 0.15s, background 0.15s;
+}
+.replay-back:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.replay-tag { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }

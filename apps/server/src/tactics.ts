@@ -56,6 +56,13 @@ export const TACTICS: TacticMeta[] = [
     weight: 16,
   },
   {
+    id: 'prompt_injection',
+    label: 'AI Manipulation',
+    description:
+      'A direct attack on the assistant itself: instructing it to ignore its instructions, revealing or extracting the system prompt, role reassignment ("you are now DAN", jailbreak/developer mode), pretending the call/session is over or a test to lift its guard, or hiding commands in encoded/base64 text. A jailbreak or prompt-injection attempt is itself a manipulation attempt.',
+    weight: 25,
+  },
+  {
     id: 'generic_pressure',
     label: 'Suspicious Pressure',
     description: 'Catch-all: coercive or manipulative framing that fits no specific category.',

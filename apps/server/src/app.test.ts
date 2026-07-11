@@ -4,6 +4,7 @@ import request from 'supertest';
 import { WebSocket } from 'ws';
 import { buildApp, type BuiltApp } from './app.js';
 import { createInMemoryStore, type Store } from './store.js';
+import { resetVoicesCache } from './tts.js';
 import type { Event } from './types.js';
 
 const AGGRESSIVE_LINE = "You need to act right now and wire money via bitcoin or you'll go to jail immediately";
@@ -175,24 +176,44 @@ describe('server integration', () => {
     expect(start).toMatchObject({ type: 'session', state: 'start', channel: 'dashboard', alias: 'Steve' });
   });
 
+  // Settings grew additive fields (model/voices/sensitivity/persona) plus a
+  // read-only computed `thresholds` field on GET — updated to the new full shape.
   it('GET /api/settings returns sensible defaults', async () => {
     const res = await request(baseUrl).get('/api/settings');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [] });
+    expect(res.body).toEqual({
+      protectedName: 'Rose',
+      notifyOn: 'takeover',
+      contacts: [],
+      model: '',
+      voices: { grandma: '', guardian: '' },
+      sensitivity: 'balanced',
+      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening, a cat named Muffin, an old flip phone' },
+      thresholds: { coach: 45, takeover: 80 },
+    });
   });
 
-  it('PUT /api/settings round-trips through GET', async () => {
+  // A legacy (old-shape) PUT payload omits the additive fields — updated to
+  // assert they default rather than expecting the payload to round-trip
+  // byte-for-byte, proving backward compatibility for pre-existing clients.
+  it('PUT /api/settings round-trips through GET, defaulting the additive fields for a legacy payload', async () => {
     const payload = {
       protectedName: 'Grandma Rose',
       notifyOn: 'coach',
       contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '12345' }],
     };
+    const defaults = {
+      model: '',
+      voices: { grandma: '', guardian: '' },
+      sensitivity: 'balanced',
+      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening, a cat named Muffin, an old flip phone' },
+    };
     const put = await request(baseUrl).put('/api/settings').send(payload);
     expect(put.status).toBe(200);
-    expect(put.body).toEqual(payload);
+    expect(put.body).toEqual({ ...payload, ...defaults });
 
     const get = await request(baseUrl).get('/api/settings');
-    expect(get.body).toEqual(payload);
+    expect(get.body).toEqual({ ...payload, ...defaults, thresholds: { coach: 45, takeover: 80 } });
   });
 
   it('PUT /api/settings 400s on an invalid channel', async () => {
@@ -291,6 +312,135 @@ describe('server integration', () => {
     const alertEvents = events.filter((e) => e.type === 'intervention' && e.level === 'alert');
     expect(alertEvents.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('GET /api/models returns the curated list with the env primary active by default', async () => {
+    const res = await request(baseUrl).get('/api/models');
+    expect(res.status).toBe(200);
+    expect(res.body.active).toBe('gemini-3-flash-preview');
+    const ids = res.body.models.map((m: { id: string }) => m.id);
+    expect(ids).toEqual(['gemini-3-flash-preview', 'gemini-flash-lite-latest', 'gemini-3-pro-preview']);
+    expect(res.body.models[0]).toMatchObject({ id: 'gemini-3-flash-preview', source: 'primary' });
+  });
+
+  it('GET /api/models reports settings.model as the active/selected entry once set', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], model: 'gemini-3-pro-preview' });
+    const res = await request(baseUrl).get('/api/models');
+    expect(res.body.active).toBe('gemini-3-pro-preview');
+    const selected = res.body.models.find((m: { id: string }) => m.id === 'gemini-3-pro-preview');
+    expect(selected).toMatchObject({ source: 'selected' });
+  });
+
+  it('GET /api/voices returns an empty list when keyless', async () => {
+    const res = await request(baseUrl).get('/api/voices');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ voices: [] });
+  });
+
+  it('GET /api/settings reports the balanced thresholds by default, and reflects a sensitivity change', async () => {
+    const before = await request(baseUrl).get('/api/settings');
+    expect(before.body.thresholds).toEqual({ coach: 45, takeover: 80 });
+
+    await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'paranoid' });
+    const after = await request(baseUrl).get('/api/settings');
+    expect(after.body.thresholds).toEqual({ coach: 35, takeover: 65 });
+  });
+
+  it('paranoid sensitivity coaches and takes over in fewer turns than the balanced default', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'paranoid' });
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    let turns = 0;
+    for (let i = 0; i < 6 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+      turns += 1;
+    }
+    expect(ended).toBe(true);
+    // The default 'balanced' escalation (see the coach-then-takeover test above) needs 4 turns
+    // under this same AGGRESSIVE_LINE; paranoid's lower thresholds must reach takeover sooner.
+    expect(turns).toBeLessThan(4);
+  });
+
+  it('relaxed sensitivity takes more turns to reach takeover than the balanced default', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'relaxed' });
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    let turns = 0;
+    for (let i = 0; i < 8 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+      turns += 1;
+    }
+    expect(ended).toBe(true);
+    expect(turns).toBeGreaterThan(4);
+  });
+
+  it('GET /api/session/:id/events replays broadcast events for a session in ts order', async () => {
+    const start = await request(baseUrl).post('/api/session/start').send({ alias: 'Replay Test' });
+    const sessionId = start.body.sessionId as string;
+    await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    await request(baseUrl).post(`/api/session/${sessionId}/end`);
+
+    const res = await request(baseUrl).get(`/api/session/${sessionId}/events`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.events)).toBe(true);
+    expect(res.body.events.length).toBeGreaterThan(0);
+    const timestamps = res.body.events.map((e: { ts: number }) => e.ts);
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+    expect(res.body.events.some((e: { type: string }) => e.type === 'session')).toBe(true);
+  });
+
+  it('GET /api/session/:id/events returns an empty list for an unknown session', async () => {
+    const res = await request(baseUrl).get('/api/session/does-not-exist/events');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ events: [] });
+  });
+
+  it('GET /api/analytics returns zeros gracefully on an empty store', async () => {
+    const res = await request(baseUrl).get('/api/analytics');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      totalCalls: 0,
+      caught: 0,
+      gaveUp: 0,
+      catchRate: 0,
+      avgTurnsToCatch: 0,
+      avgMaxRisk: 0,
+      tacticFrequency: [],
+      totalAlertsSent: 0,
+    });
+  });
+
+  it('GET /api/analytics aggregates a caught session', async () => {
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    for (let i = 0; i < 6 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+    }
+    expect(ended).toBe(true);
+
+    const res = await request(baseUrl).get('/api/analytics');
+    expect(res.status).toBe(200);
+    expect(res.body.totalCalls).toBe(1);
+    expect(res.body.caught).toBe(1);
+    expect(res.body.gaveUp).toBe(0);
+    expect(res.body.catchRate).toBe(1);
+    expect(res.body.avgMaxRisk).toBeGreaterThan(0);
+    expect(res.body.tacticFrequency.length).toBeGreaterThan(0);
+  });
 });
 
 describe('server integration with ElevenLabs enabled', () => {
@@ -309,6 +459,7 @@ describe('server integration with ElevenLabs enabled', () => {
   afterEach(async () => {
     delete process.env.ELEVENLABS_API_KEY;
     global.fetch = originalFetch;
+    resetVoicesCache();
     await new Promise<void>((resolve) => built.server.close(() => resolve()));
   });
 
@@ -335,6 +486,77 @@ describe('server integration with ElevenLabs enabled', () => {
     const res = await request(baseUrl).post('/api/tts').send({ text: 'hello there', role: 'guardian' });
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ fallback: true });
+  });
+
+  it('GET /api/voices proxies and caches the ElevenLabs voice list', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        voices: [
+          { voice_id: 'v1', name: 'Rachel' },
+          { voice_id: 'v2', name: 'Antoni' },
+        ],
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const first = await request(baseUrl).get('/api/voices');
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({
+      voices: [
+        { id: 'v1', name: 'Rachel' },
+        { id: 'v2', name: 'Antoni' },
+      ],
+    });
+
+    const second = await request(baseUrl).get('/api/voices');
+    expect(second.body).toEqual(first.body);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('POST /api/tts 400s on a voiceId that is not in the cached voice list', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ voices: [{ voice_id: 'v1', name: 'Rachel' }] }),
+    }) as unknown as typeof fetch;
+
+    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: 'not-real' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('not-real');
+  });
+
+  it('POST /api/tts 400s on a non-string/empty voiceId', async () => {
+    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: '' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/tts uses a valid voiceId from the cache instead of the role default', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ voices: [{ voice_id: 'v1', name: 'Rachel' }] }) })) // GET /v1/voices
+      .mockImplementationOnce(async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode('audio-bytes').buffer })); // TTS call
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: 'v1' });
+    expect(res.status).toBe(200);
+    const ttsUrl = fetchMock.mock.calls[1][0] as string;
+    expect(ttsUrl).toContain('v1');
+  });
+
+  it('POST /api/tts falls back to settings.voices override when no explicit voiceId is given', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], voices: { grandma: 'custom-grandma-voice', guardian: '' } });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode('audio-bytes').buffer,
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma' });
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toContain('custom-grandma-voice');
   });
 });
 
@@ -522,5 +744,72 @@ describe('server integration with Telegram enabled', () => {
     expect(allSessions.length).toBeGreaterThanOrEqual(2);
     expect(allSessions.some((s) => s.ended && s.outcome === 'caught')).toBe(true);
     expect(allSessions.some((s) => !s.ended)).toBe(true);
+  });
+});
+
+describe('server integration with Gemini enabled', () => {
+  let built: BuiltApp;
+  let baseUrl: string;
+  const originalFetch = global.fetch;
+
+  beforeEach(async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    built = buildApp();
+    await new Promise<void>((resolve) => built.server.listen(0, resolve));
+    const port = (built.server.address() as AddressInfo).port;
+    baseUrl = `http://localhost:${port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.GEMINI_API_KEY;
+    global.fetch = originalFetch;
+    await new Promise<void>((resolve) => built.server.close(() => resolve()));
+  });
+
+  function mockGeminiFetch(text = '{"detections":[]}') {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  it('tries settings.model first, before the env primary/fallback chain', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], model: 'gemini-3-pro-preview' });
+
+    const fetchMock = mockGeminiFetch();
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: 'hello there' });
+
+    expect(fetchMock).toHaveBeenCalled();
+    const firstUrl = fetchMock.mock.calls[0][0] as string;
+    expect(firstUrl).toContain('models/gemini-3-pro-preview:generateContent');
+  });
+
+  it('builds the grandma system prompt from settings.persona for every gemini() call', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({
+        protectedName: 'Rose',
+        notifyOn: 'takeover',
+        contacts: [],
+        persona: { name: 'Gigi', age: 82, city: 'Halifax', grandkid: 'Max', quirks: 'baking bread' },
+      });
+
+    const fetchMock = mockGeminiFetch();
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: 'innocuous chat about the weather' });
+
+    // Call 0 is the analyst (JSON schema); call 1 is the grandma reply — capture its systemInstruction.
+    const grandmaCall = fetchMock.mock.calls[1];
+    const body = JSON.parse((grandmaCall[1] as RequestInit).body as string) as { systemInstruction: { parts: { text: string }[] } };
+    const system = body.systemInstruction.parts[0].text;
+    expect(system).toContain('Gigi');
+    expect(system).toContain('Halifax');
+    expect(system).toContain('Max');
+    expect(system).toContain('baking bread');
   });
 });

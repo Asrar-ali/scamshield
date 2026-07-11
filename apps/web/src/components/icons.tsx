@@ -165,6 +165,12 @@ const TACTIC_ICONS: Record<TacticId, (p: IconProps) => JSX.Element> = {
       <path d="M5.5 16c.6-1.6 1.8-2.4 3-2.4s2.4.8 3 2.4M14.5 10h4M14.5 13.5h3" />
     </Icon>
   ),
+  prompt_injection: (p) => (
+    <Icon {...p}>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M7 9l3 3-3 3M12.5 15h4.5" />
+    </Icon>
+  ),
   generic_pressure: (p) => (
     <Icon {...p}>
       <path d="M12 3.5 2.5 20h19L12 3.5Z" />

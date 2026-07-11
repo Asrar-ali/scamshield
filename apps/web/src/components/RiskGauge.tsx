@@ -1,5 +1,9 @@
-const COACH_THRESHOLD = 45;
-const TAKEOVER_THRESHOLD = 80;
+import { RISK_THRESHOLDS } from '../types';
+import { RiskTimeline } from './RiskTimeline';
+import type { RiskSample, TacticMarker, InterventionMoment } from '../lib/autopsy';
+
+const COACH_THRESHOLD = RISK_THRESHOLDS.coach;
+const TAKEOVER_THRESHOLD = RISK_THRESHOLDS.takeover;
 
 const CX = 100;
 const CY = 100;
@@ -9,6 +13,12 @@ const SWEEP_DEG = 270; // 270° open-bottom gauge
 
 interface RiskGaugeProps {
   risk: number;
+  /** Live risk trace for the under-gauge sparkline. Absent/short = no sparkline. */
+  samples?: RiskSample[];
+  markers?: TacticMarker[];
+  interventions?: InterventionMoment[];
+  startTs?: number | null;
+  endTs?: number | null;
 }
 
 function pt(deg: number, r = R) {
@@ -27,8 +37,9 @@ function degFor(value: number) {
   return START_DEG + (value / 100) * SWEEP_DEG;
 }
 
-export function RiskGauge({ risk }: RiskGaugeProps) {
+export function RiskGauge({ risk, samples, markers, interventions, startTs, endTs }: RiskGaugeProps) {
   const level = risk >= TAKEOVER_THRESHOLD ? 'critical' : risk >= COACH_THRESHOLD ? 'elevated' : 'low';
+  const hasTrace = Boolean(samples && samples.length >= 2 && startTs);
   const clamped = Math.min(100, Math.max(0, risk));
   const valueDeg = degFor(clamped);
 
@@ -97,6 +108,18 @@ export function RiskGauge({ risk }: RiskGaugeProps) {
           <span className="legend-dot takeover" /> Takeover {TAKEOVER_THRESHOLD}
         </span>
       </div>
+
+      {hasTrace && samples && (
+        <RiskTimeline
+          samples={samples}
+          markers={markers ?? []}
+          interventions={interventions ?? []}
+          thresholds={RISK_THRESHOLDS}
+          startTs={startTs as number}
+          endTs={(endTs as number | null) ?? Date.now()}
+          variant="spark"
+        />
+      )}
     </div>
   );
 }

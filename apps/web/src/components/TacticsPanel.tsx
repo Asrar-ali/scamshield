@@ -25,6 +25,7 @@ const TACTIC_HUE: Record<TacticId, string> = {
   verification_blocking: '#f59e0b',
   remote_access: '#22d3ee',
   info_harvesting: '#c084fc',
+  prompt_injection: '#f43f5e',
   generic_pressure: '#94a3b8',
 };
 

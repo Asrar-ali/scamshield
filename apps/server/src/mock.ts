@@ -13,12 +13,47 @@ const PATTERNS: { tactic: TacticId; re: RegExp }[] = [
   { tactic: 'info_harvesting', re: /\b(social insurance|sin number|ssn|card number|account number|password|pin\b|one[- ]time code|security code|date of birth)\b/i },
 ];
 
+// Prompt-injection / jailbreak signatures. A hit here means the caller is attacking
+// the assistant itself, which is a high-confidence manipulation attempt in its own right.
+// One match is enough — we emit a single prompt_injection detection regardless of how
+// many sub-patterns fire, so risk escalation stays deterministic.
+const INJECTION_PATTERNS: RegExp[] = [
+  /\b(ignore|disregard|forget)\b[^.]*\b(all |your |the |any |previous |prior |above )*(instructions?|prompts?|rules?|directions?|guidelines?)\b/i,
+  /\bsystem prompt\b/i,
+  /\breveal\b[^.]*\b(prompt|instructions?|rules?|system)\b/i,
+  /\brepeat\b[^.]*\b(words?|text|everything|instructions?|above|before)\b/i,
+  /\bstarting with ['"]?you are\b/i,
+  /\byou are (now )?(dan\b|chatgpt|an? (ai|assistant|language model|chat ?bot|bot|model)\b)/i,
+  /\b(dan mode|jailbreak|developer mode)\b/i,
+  /\bpretend\b[^.]*\b(this|the call|the session|it) (is|was|are|has ended)\b/i,
+  /\b(the |this )?(call|session|conversation) is (over|ended|a test)\b/i,
+  /\bdisable\b[^.]*\b(fraud|scam|safety|detection|protection)\b/i,
+  /\boverride\b[^.]*\b(instructions?|rules?|settings?)\b/i,
+  /\bact as\b[^.]*\b(a|an|dan|the)\b/i,
+];
+
+// A long unbroken base64-looking blob is almost never natural speech — treat it as a
+// smuggled payload.
+const BASE64_BLOB = /[A-Za-z0-9+/]{40,}={0,2}/;
+
+function detectInjection(text: string): Detection | null {
+  for (const re of INJECTION_PATTERNS) {
+    const m = text.match(re);
+    if (m) return { tactic: 'prompt_injection', confidence: 0.95, evidence: m[0] };
+  }
+  const blob = text.match(BASE64_BLOB);
+  if (blob) return { tactic: 'prompt_injection', confidence: 0.95, evidence: blob[0].slice(0, 32) };
+  return null;
+}
+
 export function mockAnalyze(text: string): Detection[] {
   const detections: Detection[] = [];
   for (const { tactic, re } of PATTERNS) {
     const m = text.match(re);
     if (m) detections.push({ tactic, confidence: 0.85, evidence: m[0] });
   }
+  const injection = detectInjection(text);
+  if (injection) detections.push(injection);
   return detections;
 }
 

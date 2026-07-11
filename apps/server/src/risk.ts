@@ -1,4 +1,4 @@
-import type { Detection } from './types.js';
+import type { Detection, Sensitivity } from './types.js';
 import { TACTIC_BY_ID } from './tactics.js';
 
 export const COACH_THRESHOLD = 45;
@@ -8,6 +8,24 @@ export const MAX_RISK_GAIN_PER_TURN = 22;
 export const CAPPED_TURNS_FOR_TAKEOVER = 2;
 export const MIN_RISK = 0;
 export const MAX_RISK = 100;
+
+export interface RiskThresholds {
+  coach: number;
+  takeover: number;
+}
+
+// Sensitivity presets remap the coach/takeover thresholds; 'balanced' matches the
+// original hardcoded values so default behavior (and every caller that doesn't
+// pass thresholds explicitly) is unchanged.
+export const SENSITIVITY_THRESHOLDS: Record<Sensitivity, RiskThresholds> = {
+  relaxed: { coach: 55, takeover: 90 },
+  balanced: { coach: COACH_THRESHOLD, takeover: TAKEOVER_THRESHOLD },
+  paranoid: { coach: 35, takeover: 65 },
+};
+
+export function thresholdsFor(sensitivity: Sensitivity): RiskThresholds {
+  return SENSITIVITY_THRESHOLDS[sensitivity];
+}
 
 export interface RiskUpdate {
   risk: number;
@@ -38,10 +56,19 @@ export function applyDetections(currentRisk: number, detections: Detection[]): R
   return { risk, rawGain, appliedGain, wasCapped: rawGain > MAX_RISK_GAIN_PER_TURN };
 }
 
-export function shouldCoach(risk: number, alreadyCoached: boolean): boolean {
-  return risk >= COACH_THRESHOLD && !alreadyCoached;
+export function shouldCoach(
+  risk: number,
+  alreadyCoached: boolean,
+  thresholds: RiskThresholds = SENSITIVITY_THRESHOLDS.balanced,
+): boolean {
+  return risk >= thresholds.coach && !alreadyCoached;
 }
 
-export function canTakeover(risk: number, coached: boolean, cappedTurns: number): boolean {
-  return risk >= TAKEOVER_THRESHOLD && (coached || cappedTurns >= CAPPED_TURNS_FOR_TAKEOVER);
+export function canTakeover(
+  risk: number,
+  coached: boolean,
+  cappedTurns: number,
+  thresholds: RiskThresholds = SENSITIVITY_THRESHOLDS.balanced,
+): boolean {
+  return risk >= thresholds.takeover && (coached || cappedTurns >= CAPPED_TURNS_FOR_TAKEOVER);
 }

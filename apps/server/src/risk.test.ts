@@ -4,6 +4,8 @@ import {
   canTakeover,
   computeRawGain,
   shouldCoach,
+  thresholdsFor,
+  SENSITIVITY_THRESHOLDS,
   COACH_THRESHOLD,
   TAKEOVER_THRESHOLD,
   MAX_RISK_GAIN_PER_TURN,
@@ -136,5 +138,51 @@ describe('canTakeover', () => {
 
   it('guarantees takeover eligibility once 2 capped turns occurred, even without coaching', () => {
     expect(canTakeover(TAKEOVER_THRESHOLD, false, 2)).toBe(true);
+  });
+});
+
+describe('sensitivity presets', () => {
+  it('thresholdsFor maps each sensitivity to its documented coach/takeover pair', () => {
+    expect(thresholdsFor('relaxed')).toEqual({ coach: 55, takeover: 90 });
+    expect(thresholdsFor('balanced')).toEqual({ coach: 45, takeover: 80 });
+    expect(thresholdsFor('paranoid')).toEqual({ coach: 35, takeover: 65 });
+  });
+
+  it('balanced matches the original hardcoded COACH_THRESHOLD/TAKEOVER_THRESHOLD', () => {
+    expect(SENSITIVITY_THRESHOLDS.balanced).toEqual({ coach: COACH_THRESHOLD, takeover: TAKEOVER_THRESHOLD });
+  });
+
+  it('shouldCoach defaults to the balanced preset when no thresholds are passed', () => {
+    expect(shouldCoach(COACH_THRESHOLD - 1, false)).toBe(false);
+    expect(shouldCoach(COACH_THRESHOLD, false)).toBe(true);
+  });
+
+  it('shouldCoach respects an explicit relaxed threshold', () => {
+    const relaxed = thresholdsFor('relaxed');
+    expect(shouldCoach(50, false, relaxed)).toBe(false);
+    expect(shouldCoach(55, false, relaxed)).toBe(true);
+  });
+
+  it('shouldCoach respects an explicit paranoid threshold', () => {
+    const paranoid = thresholdsFor('paranoid');
+    expect(shouldCoach(30, false, paranoid)).toBe(false);
+    expect(shouldCoach(35, false, paranoid)).toBe(true);
+  });
+
+  it('canTakeover defaults to the balanced preset when no thresholds are passed', () => {
+    expect(canTakeover(TAKEOVER_THRESHOLD - 1, true, 5)).toBe(false);
+    expect(canTakeover(TAKEOVER_THRESHOLD, true, 0)).toBe(true);
+  });
+
+  it('canTakeover respects an explicit paranoid threshold (lower bar than balanced)', () => {
+    const paranoid = thresholdsFor('paranoid');
+    expect(canTakeover(65, true, 0, paranoid)).toBe(true);
+    expect(canTakeover(64, true, 0, paranoid)).toBe(false);
+  });
+
+  it('canTakeover respects an explicit relaxed threshold (higher bar than balanced)', () => {
+    const relaxed = thresholdsFor('relaxed');
+    expect(canTakeover(80, true, 0, relaxed)).toBe(false);
+    expect(canTakeover(90, true, 0, relaxed)).toBe(true);
   });
 });
