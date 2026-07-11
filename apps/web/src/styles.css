@@ -1,0 +1,109 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --panel: #131722;
+  --border: #232a3b;
+  --text: #e6e9f0;
+  --muted: #8b93a7;
+  --accent: #7c6cff;
+  --scammer: #ff6b6b;
+  --grandma: #6bcb77;
+  --guardian: #4d9fff;
+  --warn: #ffb020;
+  --crit: #ff4757;
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border);
+}
+.brand { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.02em; }
+.brand em { color: var(--accent); font-style: normal; }
+.conn { font-size: 0.7rem; padding: 0.2rem 0.6rem; border-radius: 999px; letter-spacing: 0.1em; }
+.conn.on { background: #10321c; color: #5eea8d; }
+.conn.off { background: #331515; color: #ff8080; }
+
+main {
+  display: grid; grid-template-columns: 1.4fr 1fr; gap: 1rem;
+  padding: 1rem 1.25rem; flex: 1; min-height: 0;
+}
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1rem; overflow: hidden;
+}
+.panel h2 {
+  font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.75rem;
+}
+.empty { color: var(--muted); font-size: 0.85rem; }
+
+.transcript-panel { display: flex; flex-direction: column; min-height: 0; }
+.transcript { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-right: 0.25rem; }
+.line { border-left: 3px solid var(--border); padding: 0.35rem 0.6rem; border-radius: 4px; }
+.line .who { font-size: 0.65rem; letter-spacing: 0.1em; color: var(--muted); }
+.line p { margin-top: 0.15rem; font-size: 0.92rem; line-height: 1.4; }
+.line.scammer { border-color: var(--scammer); }
+.line.grandma { border-color: var(--grandma); }
+.line.guardian { border-color: var(--guardian); background: #101b2e; }
+
+.composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.composer input {
+  flex: 1; background: #0d1119; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 0.6rem 0.8rem; font: inherit; font-size: 0.9rem;
+}
+.composer input:focus { outline: 1px solid var(--accent); }
+button.primary {
+  background: var(--accent); border: 0; border-radius: 8px; color: #fff;
+  padding: 0.6rem 1.1rem; font: inherit; font-weight: 600; cursor: pointer;
+}
+button.primary:disabled { opacity: 0.5; cursor: default; }
+
+.side { display: flex; flex-direction: column; gap: 1rem; min-height: 0; overflow-y: auto; }
+
+.risk { text-align: center; }
+.risk-score { font-size: 3rem; font-weight: 800; line-height: 1; }
+.risk-bar { height: 8px; background: #0d1119; border-radius: 999px; margin: 0.6rem 0 0.4rem; overflow: hidden; }
+.risk-fill { height: 100%; background: var(--accent); transition: width 0.5s ease; }
+.risk-elevated .risk-fill { background: var(--warn); }
+.risk-critical .risk-fill { background: var(--crit); }
+.risk-elevated .risk-score { color: var(--warn); }
+.risk-critical .risk-score { color: var(--crit); animation: pulse 0.9s infinite; }
+.risk-label { font-size: 0.7rem; letter-spacing: 0.15em; color: var(--muted); }
+
+@keyframes pulse { 50% { opacity: 0.55; } }
+
+.tactics { display: flex; flex-direction: column; gap: 0.5rem; }
+.tactic-card {
+  border: 1px solid var(--warn); background: #1c1508; border-radius: 8px;
+  padding: 0.5rem 0.7rem; display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 0.5rem;
+  animation: ignite 0.4s ease;
+}
+.tactic-name { font-weight: 700; font-size: 0.85rem; color: var(--warn); }
+.tactic-evidence { grid-column: 1 / -1; color: var(--muted); font-size: 0.78rem; font-style: italic; }
+.tactic-conf { color: var(--warn); font-size: 0.8rem; font-weight: 700; }
+
+@keyframes ignite {
+  from { transform: scale(0.95); box-shadow: 0 0 24px var(--warn); }
+  to { transform: scale(1); box-shadow: none; }
+}
+
+.interventions { display: flex; flex-direction: column; gap: 0.5rem; }
+.intervention { border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.85rem; }
+.intervention .level { font-size: 0.62rem; letter-spacing: 0.12em; display: block; margin-bottom: 0.2rem; }
+.intervention.coach { background: #102336; border: 1px solid var(--guardian); }
+.intervention.coach .level { color: var(--guardian); }
+.intervention.takeover { background: #2b1016; border: 1px solid var(--crit); }
+.intervention.takeover .level { color: var(--crit); }
+.intervention.alert { background: #241a08; border: 1px solid var(--warn); }
+.intervention.alert .level { color: var(--warn); }
