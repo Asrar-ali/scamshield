@@ -1,18 +1,27 @@
 import { MongoClient, type Collection } from 'mongodb';
-import type { Event } from './types.js';
+import type { Event, Settings } from './types.js';
 import { log } from './log.js';
 import type { LeaderboardEntry, SessionRecord, Store } from './store.js';
 
 const DB_NAME = process.env.MONGODB_DB ?? 'scamshield';
+const SETTINGS_DOC_ID = 'singleton';
 
 export function createMongoStore(uri: string): Store {
   const client = new MongoClient(uri);
-  let connecting: Promise<{ sessions: Collection<SessionRecord>; events: Collection<StoredEvent> }> | null = null;
+  let connecting: Promise<{
+    sessions: Collection<SessionRecord>;
+    events: Collection<StoredEvent>;
+    settings: Collection<StoredSettings>;
+  }> | null = null;
 
   interface StoredEvent {
     sessionId: string | undefined;
     event: Event;
     ts: number;
+  }
+
+  interface StoredSettings extends Settings {
+    _id: string;
   }
 
   async function collections() {
@@ -24,6 +33,7 @@ export function createMongoStore(uri: string): Store {
           return {
             sessions: db.collection<SessionRecord>('sessions'),
             events: db.collection<StoredEvent>('events'),
+            settings: db.collection<StoredSettings>('settings'),
           };
         })
         .catch((err) => {
@@ -56,6 +66,25 @@ export function createMongoStore(uri: string): Store {
         collections().then(({ events }) => events.insertOne({ sessionId, event, ts: Date.now() })),
         'saveEvent',
       );
+    },
+    saveSettings(next) {
+      fireAndForget(
+        collections().then(({ settings }) =>
+          settings.updateOne({ _id: SETTINGS_DOC_ID }, { $set: { ...next, _id: SETTINGS_DOC_ID } }, { upsert: true }),
+        ),
+        'saveSettings',
+      );
+    },
+    async getSettings(): Promise<Settings | null> {
+      try {
+        const { settings } = await collections();
+        const doc = await settings.findOne({ _id: SETTINGS_DOC_ID });
+        if (!doc) return null;
+        return { protectedName: doc.protectedName, notifyOn: doc.notifyOn, contacts: doc.contacts };
+      } catch (err) {
+        log.warn('Mongo store getSettings failed:', err instanceof Error ? err.message : err);
+        return null;
+      }
     },
     async getLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
       try {

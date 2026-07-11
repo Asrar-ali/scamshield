@@ -17,7 +17,8 @@ export type Event =
   | { type: 'tactic'; tactic: TacticId; confidence: number; evidence: string; ts: number }
   | { type: 'risk'; score: number; ts: number }
   | { type: 'intervention'; level: 'coach' | 'takeover' | 'alert'; text: string; ts: number }
-  | { type: 'session'; state: 'start' | 'end'; id: string; ts: number };
+  | { type: 'session'; state: 'start' | 'end'; id: string; ts: number; channel?: 'dashboard' | 'telegram'; alias?: string }
+  | { type: 'delivery'; contact: string; channel: 'telegram' | 'imessage'; ok: boolean; ts: number };
 
 export interface TacticMeta {
   id: TacticId;
@@ -30,4 +31,20 @@ export interface Detection {
   tactic: TacticId;
   confidence: number;
   evidence: string;
+}
+
+export type NotifyOn = 'coach' | 'takeover';
+export type ContactChannel = 'telegram' | 'imessage';
+
+export interface Contact {
+  id: string;
+  name: string;
+  channel: ContactChannel;
+  address: string;
+}
+
+export interface Settings {
+  protectedName: string;
+  notifyOn: NotifyOn;
+  contacts: Contact[];
 }

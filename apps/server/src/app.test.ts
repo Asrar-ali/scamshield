@@ -1,8 +1,9 @@
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { WebSocket } from 'ws';
 import { buildApp, type BuiltApp } from './app.js';
+import { createInMemoryStore, type Store } from './store.js';
 import type { Event } from './types.js';
 
 const AGGRESSIVE_LINE = "You need to act right now and wire money via bitcoin or you'll go to jail immediately";
@@ -17,6 +18,8 @@ describe('server integration', () => {
     delete process.env.GEMINI_API_KEY;
     delete process.env.ELEVENLABS_API_KEY;
     delete process.env.MONGODB_URI;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.SCAMSHIELD_IMESSAGE_ENABLED;
     built = buildApp();
     sockets = [];
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
@@ -26,6 +29,7 @@ describe('server integration', () => {
 
   afterEach(async () => {
     for (const ws of sockets) ws.terminate();
+    built.telegram.stop();
     await new Promise<void>((resolve) => built.server.close(() => resolve()));
   });
 
@@ -163,6 +167,130 @@ describe('server integration', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, mode: 'mock' });
   });
+
+  it('broadcasts a session-start event with dashboard channel and alias', async () => {
+    const { events } = await connectSocket();
+    await request(baseUrl).post('/api/session/start').send({ alias: 'Steve' });
+    const start = events.find((e) => e.type === 'session' && e.state === 'start');
+    expect(start).toMatchObject({ type: 'session', state: 'start', channel: 'dashboard', alias: 'Steve' });
+  });
+
+  it('GET /api/settings returns sensible defaults', async () => {
+    const res = await request(baseUrl).get('/api/settings');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [] });
+  });
+
+  it('PUT /api/settings round-trips through GET', async () => {
+    const payload = {
+      protectedName: 'Grandma Rose',
+      notifyOn: 'coach',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '12345' }],
+    };
+    const put = await request(baseUrl).put('/api/settings').send(payload);
+    expect(put.status).toBe(200);
+    expect(put.body).toEqual(payload);
+
+    const get = await request(baseUrl).get('/api/settings');
+    expect(get.body).toEqual(payload);
+  });
+
+  it('PUT /api/settings 400s on an invalid channel', async () => {
+    const res = await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'sms', address: '1' }] });
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /api/settings 400s on more than 5 contacts', async () => {
+    const contacts = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, channel: 'telegram', address: `${i}` }));
+    const res = await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'takeover', contacts });
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /api/settings 400s on an invalid notifyOn', async () => {
+    const res = await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'always', contacts: [] });
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /api/telegram/status reports not-connected when TELEGRAM_BOT_TOKEN is unset', async () => {
+    const res = await request(baseUrl).get('/api/telegram/status');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, botUsername: null, recentChats: [] });
+  });
+
+  it('POST /api/alert-test reports no deliveries when no contacts are configured', async () => {
+    const res = await request(baseUrl).post('/api/alert-test');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deliveries: [] });
+  });
+
+  it('POST /api/alert-test reports a failed delivery for a configured telegram contact when no bot token is set', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'telegram', address: '111' }] });
+    const res = await request(baseUrl).post('/api/alert-test');
+    expect(res.status).toBe(200);
+    expect(res.body.deliveries).toEqual([
+      { contact: 'Sarah', channel: 'telegram', ok: false, error: 'Telegram is not configured' },
+    ]);
+  });
+
+  it('emits a delivery event and a real alert-summary intervention on takeover when a contact is configured', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'telegram', address: '111' }] });
+
+    const { events } = await connectSocket();
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    for (let i = 0; i < 6 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+    }
+    expect(ended).toBe(true);
+
+    const delivery = events.find((e) => e.type === 'delivery');
+    expect(delivery).toMatchObject({ type: 'delivery', contact: 'Sarah', channel: 'telegram', ok: false });
+
+    const alert = events.find((e) => e.type === 'intervention' && e.level === 'alert');
+    expect(alert && 'text' in alert ? alert.text : undefined).toContain('Family alert attempted but delivery failed');
+  });
+
+  it('does not alert at the coach level by default (notifyOn: takeover)', async () => {
+    const { events } = await connectSocket();
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    for (let i = 0; i < 6 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+    }
+    expect(ended).toBe(true);
+
+    const alertEvents = events.filter((e) => e.type === 'intervention' && e.level === 'alert');
+    expect(alertEvents.length).toBe(1);
+  });
+
+  it('also alerts at the coach level when notifyOn is set to coach', async () => {
+    await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'coach', contacts: [] });
+    const { events } = await connectSocket();
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    let ended = false;
+    for (let i = 0; i < 6 && !ended; i += 1) {
+      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
+      ended = res.body.ended === true;
+    }
+    expect(ended).toBe(true);
+
+    const alertEvents = events.filter((e) => e.type === 'intervention' && e.level === 'alert');
+    expect(alertEvents.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('server integration with ElevenLabs enabled', () => {
@@ -256,5 +384,143 @@ describe('server integration with a failing store', () => {
     const res = await request(baseUrl).get('/api/leaderboard');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ entries: [] });
+  });
+});
+
+describe('server integration with Telegram enabled', () => {
+  let built: BuiltApp;
+  const originalFetch = global.fetch;
+
+  afterEach(async () => {
+    built.telegram.stop();
+    await new Promise<void>((resolve) => built.server.close(() => resolve()));
+    vi.useRealTimers();
+    global.fetch = originalFetch;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    vi.restoreAllMocks();
+  });
+
+  it('finds-or-creates a session per chat id, ignores /start, and mirrors the conversation as channel:telegram', async () => {
+    vi.useFakeTimers();
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+
+    let telegramRef: BuiltApp['telegram'] | undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: { username: 'RoseBot' } }) })) // getMe
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: [{ update_id: 1, message: { chat: { id: 555, type: 'private', first_name: 'Sarah' }, text: '/start' } }],
+        }),
+      })) // getUpdates: /start
+      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: welcome reply
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: [{ update_id: 2, message: { chat: { id: 555, type: 'private', first_name: 'Sarah' }, text: INNOCENT_LINE } }],
+        }),
+      })) // getUpdates: a real (innocent) message
+      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: grandma reply
+      .mockImplementationOnce(async () => {
+        telegramRef?.stop();
+        return { ok: true, json: async () => ({ ok: true, result: [] }) };
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // The Telegram poll loop here is driven purely by mocked, instantly-resolving
+    // fetches, so it can drain entirely via microtasks before a real WebSocket
+    // handshake (a macrotask) would ever get a turn. Capture broadcast events
+    // through the store's saveEvent hook instead — buildApp() calls it for every
+    // broadcast regardless of whether any WS client is connected, so it's race-free.
+    const events: Event[] = [];
+    const baseStore = createInMemoryStore();
+    const capturingStore: Store = {
+      ...baseStore,
+      saveEvent(sessionId, event) {
+        events.push(event);
+        baseStore.saveEvent(sessionId, event);
+      },
+    };
+
+    built = buildApp({ store: capturingStore });
+    telegramRef = built.telegram;
+    await new Promise<void>((resolve) => built.server.listen(0, resolve));
+    const port = (built.server.address() as AddressInfo).port;
+
+    for (let i = 0; i < 15; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    // /start never creates a session — only the first real message does.
+    expect(built.sessions.size).toBe(1);
+    const [session] = [...built.sessions.values()];
+    expect(session.alias).toBe('Sarah');
+
+    const welcomeCall = fetchMock.mock.calls[2];
+    expect(JSON.parse((welcomeCall[1] as RequestInit).body as string).text).toContain('Hello dear');
+
+    const replyCall = fetchMock.mock.calls[4];
+    const replyBody = JSON.parse((replyCall[1] as RequestInit).body as string);
+    expect(replyBody.chat_id).toBe('555');
+    expect(typeof replyBody.text).toBe('string');
+
+    const sessionStart = events.find((e) => e.type === 'session' && e.state === 'start');
+    expect(sessionStart).toMatchObject({ type: 'session', state: 'start', channel: 'telegram', alias: 'Sarah' });
+    expect(events.some((e) => e.type === 'utterance' && e.role === 'scammer' && e.text === INNOCENT_LINE)).toBe(true);
+    expect(events.some((e) => e.type === 'utterance' && e.role === 'grandma')).toBe(true);
+
+    const statusRes = await request(`http://localhost:${port}`).get('/api/telegram/status');
+    expect(statusRes.body).toEqual({
+      enabled: true,
+      botUsername: 'RoseBot',
+      recentChats: [{ chatId: '555', name: 'Sarah', lastSeen: expect.any(Number) }],
+    });
+  });
+
+  it('starts a fresh session for the next message after a takeover ends the previous one', async () => {
+    vi.useFakeTimers();
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+
+    let telegramRef: BuiltApp['telegram'] | undefined;
+    const scamUpdate = (updateId: number) => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        result: [{ update_id: updateId, message: { chat: { id: 777, type: 'private', first_name: 'Tom' }, text: AGGRESSIVE_LINE } }],
+      }),
+    });
+
+    const fetchMock = vi.fn();
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: {} }) })); // getMe
+    // Feed enough aggressive turns to guarantee a takeover, each followed by a sendMessage call.
+    for (let i = 0; i < 6; i += 1) {
+      fetchMock.mockImplementationOnce(async () => scamUpdate(i + 1));
+      fetchMock.mockImplementationOnce(async () => ({ ok: true }));
+    }
+    fetchMock.mockImplementationOnce(async () => scamUpdate(100)); // message after takeover: should start a fresh session
+    fetchMock.mockImplementationOnce(async () => ({ ok: true }));
+    fetchMock.mockImplementationOnce(async () => {
+      telegramRef?.stop();
+      return { ok: true, json: async () => ({ ok: true, result: [] }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    built = buildApp();
+    telegramRef = built.telegram;
+    await new Promise<void>((resolve) => built.server.listen(0, resolve));
+
+    for (let i = 0; i < 60; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    const allSessions = [...built.sessions.values()];
+    expect(allSessions.length).toBeGreaterThanOrEqual(2);
+    expect(allSessions.some((s) => s.ended && s.outcome === 'caught')).toBe(true);
+    expect(allSessions.some((s) => !s.ended)).toBe(true);
   });
 });

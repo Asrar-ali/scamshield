@@ -1,4 +1,4 @@
-import type { Event } from './types.js';
+import type { Event, Settings } from './types.js';
 import { log } from './log.js';
 import { createMongoStore } from './store-mongo.js';
 
@@ -29,11 +29,16 @@ export interface Store {
   saveSessionEnd(record: SessionRecord): void;
   saveEvent(sessionId: string | undefined, event: Event): void;
   getLeaderboard(limit?: number): Promise<LeaderboardEntry[]>;
+  // Additive/optional: settings persistence. Implementers (in-memory, Mongo) may
+  // provide these; callers must not assume they exist (see settings.ts).
+  saveSettings?(settings: Settings): void;
+  getSettings?(): Promise<Settings | null>;
 }
 
 export function createInMemoryStore(): Store {
   const sessions = new Map<string, SessionRecord>();
   const events: { sessionId: string | undefined; event: Event }[] = [];
+  let settings: Settings | null = null;
 
   return {
     saveSessionStart(record) {
@@ -44,6 +49,12 @@ export function createInMemoryStore(): Store {
     },
     saveEvent(sessionId, event) {
       events.push({ sessionId, event });
+    },
+    saveSettings(next) {
+      settings = next;
+    },
+    async getSettings() {
+      return settings;
     },
     async getLeaderboard(limit = 10) {
       return [...sessions.values()]

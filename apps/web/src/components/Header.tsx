@@ -1,4 +1,5 @@
 import { Wordmark } from './Wordmark';
+import { GearIcon } from './icons';
 
 export type CallState = 'idle' | 'live' | 'ended';
 
@@ -8,6 +9,7 @@ interface HeaderProps {
   elapsed: string;
   muted: boolean;
   onToggleMute: () => void;
+  onOpenSettings: () => void;
 }
 
 const STATE_LABEL: Record<CallState, string> = {
@@ -25,7 +27,7 @@ function SoundIcon({ muted }: { muted: boolean }) {
   );
 }
 
-export function Header({ connected, callState, elapsed, muted, onToggleMute }: HeaderProps) {
+export function Header({ connected, callState, elapsed, muted, onToggleMute, onOpenSettings }: HeaderProps) {
   return (
     <header className="app-header">
       <Wordmark />
@@ -49,6 +51,9 @@ export function Header({ connected, callState, elapsed, muted, onToggleMute }: H
           <span className="conn-dot" />
           {connected ? 'CONNECTED' : 'OFFLINE'}
         </div>
+        <button type="button" className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Settings">
+          <GearIcon width={16} height={16} />
+        </button>
       </div>
     </header>
   );

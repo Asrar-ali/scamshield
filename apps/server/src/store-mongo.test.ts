@@ -8,7 +8,8 @@ const toArray = vi.fn().mockResolvedValue([
 const limit = vi.fn().mockReturnValue({ toArray });
 const sort = vi.fn().mockReturnValue({ limit });
 const find = vi.fn().mockReturnValue({ sort });
-const collection = vi.fn().mockReturnValue({ updateOne, insertOne, find });
+const findOne = vi.fn().mockResolvedValue(null);
+const collection = vi.fn().mockReturnValue({ updateOne, insertOne, find, findOne });
 const db = vi.fn().mockReturnValue({ collection });
 const connect = vi.fn().mockResolvedValue(undefined);
 
@@ -79,6 +80,51 @@ describe('createMongoStore', () => {
     const store = createMongoStore('mongodb://test');
     insertOne.mockRejectedValueOnce(new Error('boom'));
     expect(() => store.saveEvent('s1', { type: 'risk', score: 1, ts: 1 })).not.toThrow();
+    await flush();
+  });
+
+  it('saveSettings upserts the singleton settings document', async () => {
+    const store = createMongoStore('mongodb://test');
+    store.saveSettings?.({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [] });
+    await flush();
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: 'singleton' },
+      { $set: expect.objectContaining({ protectedName: 'Rose', notifyOn: 'takeover' }) },
+      { upsert: true },
+    );
+  });
+
+  it('getSettings returns null when nothing has been saved', async () => {
+    const store = createMongoStore('mongodb://test');
+    findOne.mockResolvedValueOnce(null);
+    expect(await store.getSettings?.()).toBeNull();
+  });
+
+  it('getSettings returns the stored document mapped to the Settings shape', async () => {
+    const store = createMongoStore('mongodb://test');
+    findOne.mockResolvedValueOnce({
+      _id: 'singleton',
+      protectedName: 'Rose',
+      notifyOn: 'coach',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '123' }],
+    });
+    expect(await store.getSettings?.()).toEqual({
+      protectedName: 'Rose',
+      notifyOn: 'coach',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '123' }],
+    });
+  });
+
+  it('getSettings returns null and never throws when the query fails', async () => {
+    const store = createMongoStore('mongodb://test');
+    findOne.mockRejectedValueOnce(new Error('boom'));
+    await expect(store.getSettings?.()).resolves.toBeNull();
+  });
+
+  it('saveSettings never throws even when the underlying upsert fails', async () => {
+    const store = createMongoStore('mongodb://test');
+    updateOne.mockRejectedValueOnce(new Error('boom'));
+    expect(() => store.saveSettings?.({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [] })).not.toThrow();
     await flush();
   });
 });

@@ -1,10 +1,13 @@
+import type { TelegramStatus } from '../lib/api';
 import { AliasForm } from './AliasForm';
 import { RoseAvatar } from './RoseAvatar';
+import { TelegramPanel } from './TelegramPanel';
 import { ShieldMark } from './icons';
 
 interface LandingProps {
   busy: boolean;
   onStart: (alias: string) => void;
+  telegramStatus: TelegramStatus;
 }
 
 const STATS = [
@@ -14,7 +17,7 @@ const STATS = [
 ];
 
 /** Idle landing hero — the pitch, the persona, and the call-to-action. */
-export function Landing({ busy, onStart }: LandingProps) {
+export function Landing({ busy, onStart, telegramStatus }: LandingProps) {
   return (
     <div className="landing">
       <div className="landing-copy">
@@ -42,6 +45,8 @@ export function Landing({ busy, onStart }: LandingProps) {
             </div>
           ))}
         </div>
+
+        <TelegramPanel status={telegramStatus} />
       </div>
 
       <div className="landing-call">

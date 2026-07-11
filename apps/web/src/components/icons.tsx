@@ -76,6 +76,38 @@ export const SirenIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const GearIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="3.2" />
+    <path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" />
+  </Icon>
+);
+
+export const TelegramIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21.5 3 2.7 10.5c-1 .4-1 1.6.1 1.9l4.5 1.4 1.7 5.4c.3.9 1.4 1.1 2 .4l2.5-2.7 4.6 3.4c.8.6 1.9.1 2.1-.9L21.5 3Z" />
+    <path d="M7.3 13.8 18 6.2" />
+  </Icon>
+);
+
+export const MessageIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 5.5h16v10.5H9.5L5 20v-4H4Z" />
+  </Icon>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4.5 12.5 9.5 17.5 19.5 6.5" />
+  </Icon>
+);
+
+export const CrossIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 5l14 14M19 5 5 19" />
+  </Icon>
+);
+
 /** Per-tactic line icons, keyed by TacticId. */
 const TACTIC_ICONS: Record<TacticId, (p: IconProps) => JSX.Element> = {
   urgency_pressure: (p) => (

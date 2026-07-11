@@ -10,6 +10,10 @@ interface ComposerProps {
   busy: boolean;
   /** Show quick-start suggestion chips (first turn only). */
   showSuggestions: boolean;
+  /** True when a Telegram-originated session is live — the judge is typing on
+   * their phone instead, so the text input/mic/send are inert but Give up
+   * still works. */
+  viewOnly?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -18,7 +22,7 @@ const SUGGESTIONS = [
   "Grandma, it's me — I'm in trouble and need money.",
 ];
 
-export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, showSuggestions }: ComposerProps) {
+export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, showSuggestions, viewOnly = false }: ComposerProps) {
   const speech = useSpeechInput({
     onInterim: (text) => onChange(text),
     onFinal: (text) => onSubmit(text),
@@ -44,7 +48,7 @@ export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, 
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
             placeholder="Say something to Rose… you are the scammer"
-            disabled={disabled || busy}
+            disabled={disabled || busy || viewOnly}
             autoFocus
           />
         </div>
@@ -54,7 +58,7 @@ export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, 
             type="button"
             className={`mic-btn ${speech.listening ? 'recording' : ''}`}
             onClick={speech.toggle}
-            disabled={disabled}
+            disabled={disabled || viewOnly}
             title={speech.listening ? 'Stop recording' : 'Speak your line'}
             aria-pressed={speech.listening}
             aria-label={speech.listening ? 'Stop recording' : 'Speak your line'}
@@ -68,7 +72,7 @@ export function Composer({ value, onChange, onSubmit, onGiveUp, disabled, busy, 
           type="button"
           className="send-btn"
           onClick={() => onSubmit()}
-          disabled={disabled || busy || !value.trim()}
+          disabled={disabled || busy || viewOnly || !value.trim()}
         >
           <SendIcon width={17} height={17} />
           Send

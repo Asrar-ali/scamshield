@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { AliasForm } from './AliasForm';
 import { Composer } from './Composer';
 import { RoseAvatar } from './RoseAvatar';
+import { TelegramIcon } from './icons';
 
 export interface Line {
   role: 'scammer' | 'grandma' | 'guardian';
@@ -10,6 +11,7 @@ export interface Line {
 }
 
 export type Outcome = 'caught' | 'gave_up' | null;
+export type SessionChannel = 'dashboard' | 'telegram' | null;
 
 interface TranscriptProps {
   lines: Line[];
@@ -27,6 +29,11 @@ interface TranscriptProps {
   connected: boolean;
   speaking: boolean;
   elapsed: string;
+  /** Which surface owns the live session — undefined/'dashboard' behaves exactly
+   * as before; 'telegram' renders a chip + caller alias and puts the composer
+   * into view-only mode. */
+  sessionChannel?: SessionChannel;
+  sessionAlias?: string | null;
 }
 
 const ROLE_LABEL: Record<Line['role'], string> = {
@@ -61,8 +68,11 @@ export function Transcript({
   connected,
   speaking,
   elapsed,
+  sessionChannel,
+  sessionAlias,
 }: TranscriptProps) {
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const viaTelegram = sessionChannel === 'telegram';
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' });
@@ -77,8 +87,15 @@ export function Transcript({
         <div className="call-id">
           <div className="call-name">
             Rose {activeSpeaking && <SpeakingWave />}
+            {viaTelegram && (
+              <span className="channel-chip channel-chip--telegram">
+                <TelegramIcon width={11} height={11} /> via Telegram
+              </span>
+            )}
           </div>
-          <div className="call-sub">78 · Ottawa · {ended ? 'call ended' : 'on the line'}</div>
+          <div className="call-sub">
+            {viaTelegram && sessionAlias ? `${sessionAlias} · ` : ''}78 · Ottawa · {ended ? 'call ended' : 'on the line'}
+          </div>
         </div>
         <div className={`call-conn ${connected ? 'on' : 'off'}`}>
           <span className="conn-dot" />
@@ -132,15 +149,24 @@ export function Transcript({
           <AliasForm busy={startBusy} ended={ended} onStart={onStart} variant="inline" />
         </div>
       ) : (
-        <Composer
-          value={input}
-          onChange={onInputChange}
-          onSubmit={onSubmit}
-          onGiveUp={onGiveUp}
-          disabled={ended}
-          busy={turnBusy}
-          showSuggestions={lines.length === 0}
-        />
+        <>
+          {viaTelegram && (
+            <div className="telegram-live-banner">
+              <TelegramIcon width={14} height={14} />
+              This call is happening on Telegram — watching live
+            </div>
+          )}
+          <Composer
+            value={input}
+            onChange={onInputChange}
+            onSubmit={onSubmit}
+            onGiveUp={onGiveUp}
+            disabled={ended}
+            viewOnly={viaTelegram}
+            busy={turnBusy}
+            showSuggestions={!viaTelegram && lines.length === 0}
+          />
+        </>
       )}
     </section>
   );

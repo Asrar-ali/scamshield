@@ -54,6 +54,18 @@ describe('createInMemoryStore', () => {
     expect(() => store.saveEvent('id-1', { type: 'risk', score: 10, ts: 1 })).not.toThrow();
     expect(() => store.saveEvent(undefined, { type: 'risk', score: 10, ts: 1 })).not.toThrow();
   });
+
+  it('returns null for settings before any save', async () => {
+    const store = createInMemoryStore();
+    expect(await store.getSettings?.()).toBeNull();
+  });
+
+  it('keeps saved settings in a field and returns them on getSettings', async () => {
+    const store = createInMemoryStore();
+    const settings = { protectedName: 'Rose', notifyOn: 'coach' as const, contacts: [] };
+    store.saveSettings?.(settings);
+    expect(await store.getSettings?.()).toEqual(settings);
+  });
 });
 
 describe('createStore', () => {

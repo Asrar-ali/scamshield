@@ -2,19 +2,30 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Event } from './types';
 import { Header, type CallState } from './components/Header';
 import { Landing } from './components/Landing';
-import { Transcript, type Line, type Outcome } from './components/Transcript';
+import { Transcript, type Line, type Outcome, type SessionChannel } from './components/Transcript';
 import { RiskGauge } from './components/RiskGauge';
 import { TacticsPanel, type TacticHit } from './components/TacticsPanel';
-import { InterventionsPanel, type Intervention } from './components/InterventionsPanel';
+import { InterventionsPanel, type FeedItem } from './components/InterventionsPanel';
 import { TakeoverFlash } from './components/TakeoverFlash';
 import { FamilyAlertToast, type AlertToast } from './components/FamilyAlertToast';
+import { DeliveryToast, type DeliveryToastItem } from './components/DeliveryToast';
+import { SettingsDrawer } from './components/SettingsDrawer';
 import { Leaderboard } from './components/Leaderboard';
 import { useElapsedTimer } from './hooks/useElapsedTimer';
 import { useVoiceOutput } from './hooks/useVoiceOutput';
-import { startSession, sendTurn, endSession } from './lib/api';
+import {
+  startSession,
+  sendTurn,
+  endSession,
+  fetchSettings,
+  fetchTelegramStatus,
+  type Settings,
+  type TelegramStatus,
+} from './lib/api';
 
 const MUTE_STORAGE_KEY = 'scamshield.muted';
 const TOAST_LIFETIME_MS = 7000;
+const DISCONNECTED_TELEGRAM: TelegramStatus = { enabled: false, botUsername: null, recentChats: [] };
 
 function readStoredMute(): boolean {
   try {
@@ -32,7 +43,7 @@ export default function App() {
   const [risk, setRisk] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
   const [hits, setHits] = useState<TacticHit[]>([]);
-  const [interventions, setInterventions] = useState<Intervention[]>([]);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
   const [outcome, setOutcome] = useState<Outcome>(null);
   const [input, setInput] = useState('');
   const [startBusy, setStartBusy] = useState(false);
@@ -41,10 +52,27 @@ export default function App() {
   const [takeoverTrigger, setTakeoverTrigger] = useState(0);
   const [toasts, setToasts] = useState<AlertToast[]>([]);
   const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
+  const [sessionChannel, setSessionChannel] = useState<SessionChannel>(null);
+  const [sessionAlias, setSessionAlias] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(DISCONNECTED_TELEGRAM);
+  const [deliveryToasts, setDeliveryToasts] = useState<DeliveryToastItem[]>([]);
 
   const toastIdRef = useRef(0);
+  const deliveryToastIdRef = useRef(0);
+  const callStateRef = useRef(callState);
+  const sessionIdRef = useRef(sessionId);
   const voice = useVoiceOutput(muted);
   const elapsed = useElapsedTimer(startedAt, callState === 'live');
+
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const pushToast = useCallback((text: string) => {
     const id = (toastIdRef.current += 1);
@@ -55,6 +83,40 @@ export default function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  const dismissDeliveryToast = useCallback((id: number) => {
+    setDeliveryToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Fetch settings + Telegram status once on mount. Both degrade to a benign
+  // "not connected" shape on 404 / network failure — see lib/api.ts.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const s = await fetchSettings();
+      if (!cancelled) setSettings(s);
+    })();
+    void (async () => {
+      const t = await fetchTelegramStatus();
+      if (!cancelled) setTelegramStatus(t);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Refresh Telegram status (recent chats) each time the settings drawer opens.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let cancelled = false;
+    void (async () => {
+      const t = await fetchTelegramStatus();
+      if (!cancelled) setTelegramStatus(t);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
@@ -74,15 +136,47 @@ export default function App() {
           setRisk(event.score);
           break;
         case 'intervention':
-          setInterventions((prev) => [{ level: event.level, text: event.text, ts: event.ts }, ...prev]);
+          setFeed((prev) => [{ kind: 'intervention', level: event.level, text: event.text, ts: event.ts }, ...prev]);
           if (event.level === 'takeover') {
             setOutcome('caught');
             setTakeoverTrigger((t) => t + 1);
           }
           if (event.level === 'alert') pushToast(event.text);
           break;
+        case 'delivery': {
+          setFeed((prev) => [
+            { kind: 'delivery', contact: event.contact, channel: event.channel, ok: event.ok, ts: event.ts },
+            ...prev,
+          ]);
+          const id = (deliveryToastIdRef.current += 1);
+          setDeliveryToasts([{ id, contact: event.contact, channel: event.channel, ok: event.ok }]);
+          setTimeout(() => setDeliveryToasts((prev) => prev.filter((t) => t.id !== id)), TOAST_LIFETIME_MS);
+          break;
+        }
         case 'session':
-          if (event.state === 'end') {
+          if (event.state === 'start') {
+            // A dashboard-originated start is already reflected locally by
+            // startCall(); only adopt Telegram-originated sessions here, and
+            // only when no other session currently owns the dashboard —
+            // first active session wins until it ends.
+            if (callStateRef.current === 'live') break;
+            if (event.channel === 'telegram') {
+              setLines([]);
+              setHits([]);
+              setFeed([]);
+              setToasts([]);
+              setDeliveryToasts([]);
+              setOutcome(null);
+              setRisk(0);
+              setInput('');
+              setSessionId(event.id);
+              setSessionChannel('telegram');
+              setSessionAlias(event.alias ?? 'Telegram caller');
+              setStartedAt(Date.now());
+              setCallState('live');
+            }
+          } else if (event.state === 'end') {
+            if (event.id !== sessionIdRef.current) break;
             setCallState('ended');
             setLeaderboardRefresh((r) => r + 1);
           }
@@ -99,11 +193,14 @@ export default function App() {
     setStartBusy(true);
     setLines([]);
     setHits([]);
-    setInterventions([]);
+    setFeed([]);
     setToasts([]);
+    setDeliveryToasts([]);
     setOutcome(null);
     setRisk(0);
     setInput('');
+    setSessionChannel('dashboard');
+    setSessionAlias(alias || 'Anonymous Scammer');
     try {
       const data = await startSession(alias || 'Anonymous Scammer');
       setSessionId(data.sessionId);
@@ -111,6 +208,8 @@ export default function App() {
       setCallState('live');
     } catch {
       setCallState('idle');
+      setSessionChannel(null);
+      setSessionAlias(null);
     } finally {
       setStartBusy(false);
     }
@@ -165,10 +264,24 @@ export default function App() {
       <div className="app-bg" aria-hidden="true" />
       <TakeoverFlash trigger={takeoverTrigger} />
       <FamilyAlertToast toasts={toasts} onDismiss={dismissToast} />
-      <Header connected={connected} callState={callState} elapsed={elapsed} muted={muted} onToggleMute={toggleMute} />
+      <DeliveryToast toasts={deliveryToasts} onDismiss={dismissDeliveryToast} />
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        initialSettings={settings}
+        telegramStatus={telegramStatus}
+      />
+      <Header
+        connected={connected}
+        callState={callState}
+        elapsed={elapsed}
+        muted={muted}
+        onToggleMute={toggleMute}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
       {!inCall ? (
-        <Landing busy={startBusy} onStart={startCall} />
+        <Landing busy={startBusy} onStart={startCall} telegramStatus={telegramStatus} />
       ) : (
         <main className="call-layout">
           <Transcript
@@ -187,12 +300,14 @@ export default function App() {
             connected={connected}
             speaking={voice.isSpeaking}
             elapsed={elapsed}
+            sessionChannel={sessionChannel}
+            sessionAlias={sessionAlias}
           />
 
           <section className="side">
             <RiskGauge risk={risk} />
             <TacticsPanel hits={hits} />
-            <InterventionsPanel interventions={interventions} />
+            <InterventionsPanel items={feed} />
             <Leaderboard refreshSignal={leaderboardRefresh} />
           </section>
         </main>
