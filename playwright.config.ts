@@ -51,6 +51,12 @@ export default defineConfig({
       timeout: 120_000,
       stdout: 'pipe',
       stderr: 'pipe',
+      // Force mock mode even when apps/server/.env holds real keys: dotenv
+      // never overrides variables already present in the environment, so these
+      // empty values win and keep the suite deterministic. Note this cannot
+      // protect against reuseExistingServer picking up an already-running dev
+      // server that was started WITH keys — stop that server before running e2e.
+      env: { GEMINI_API_KEY: '', ELEVENLABS_API_KEY: '', MONGODB_URI: '' },
     },
     {
       command: 'npm run dev -w apps/web',

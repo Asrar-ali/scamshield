@@ -12,6 +12,25 @@ import { applyDetections, canTakeover, shouldCoach } from './risk.js';
 import { sanitizeAlias } from './alias.js';
 import { createStore, type SessionRecord, type SessionOutcome, type Store } from './store.js';
 import { ttsEnabled, synthesizeSpeech, type VoiceRole } from './tts.js';
+
+const DETECTIONS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    detections: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          tactic: { type: 'STRING' },
+          confidence: { type: 'NUMBER' },
+          evidence: { type: 'STRING' },
+        },
+        required: ['tactic', 'confidence', 'evidence'],
+      },
+    },
+  },
+  required: ['detections'],
+};
 import { log } from './log.js';
 
 interface Session {
@@ -91,10 +110,13 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
         .slice(-8)
         .map((h) => `${h.role === 'user' ? 'CALLER' : 'ROSE'}: ${h.text}`)
         .join('\n');
-      const raw = await gemini(ANALYST_SYSTEM, [
-        { role: 'user', text: `Conversation so far:\n${context}\n\nNew CALLER utterance to analyze:\n"${text}"` },
-      ]);
-      const parsed = JSON.parse(raw.replace(/^```json?\s*|\s*```$/g, '')) as { detections: Detection[] };
+      const raw = await gemini(
+        ANALYST_SYSTEM,
+        [{ role: 'user', text: `Conversation so far:\n${context}\n\nNew CALLER utterance to analyze:\n"${text}"` }],
+        { json: true, temperature: 0.2, schema: DETECTIONS_SCHEMA },
+      );
+      const body = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+      const parsed = JSON.parse(body) as { detections: Detection[] };
       return parsed.detections.filter((d) => TACTIC_BY_ID.has(d.tactic));
     } catch (err) {
       log.warn('Analyst fell back to mock:', err instanceof Error ? err.message : err);
