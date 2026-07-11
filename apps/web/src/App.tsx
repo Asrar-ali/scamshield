@@ -417,7 +417,13 @@ export default function App() {
           </section>
         </main>
       ) : !inCall ? (
-        <Landing busy={startBusy} onStart={startCall} telegramStatus={telegramStatus} />
+        <Landing
+          busy={startBusy}
+          onStart={startCall}
+          telegramStatus={telegramStatus}
+          onReplay={openReplay}
+          refreshSignal={leaderboardRefresh}
+        />
       ) : (
         <main className="call-layout">
           <div className={`left-stack ${callState === 'ended' ? 'left-stack--ended' : ''}`}>

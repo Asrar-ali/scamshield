@@ -191,6 +191,18 @@ button { font-family: inherit; }
 }
 .landing-sub { font-size: 1.06rem; line-height: 1.6; color: var(--muted); max-width: 33rem; }
 
+.landing-recents { margin-top: 1.4rem; max-width: 30rem; }
+.landing-recents-title { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.08em; color: var(--muted-2); text-transform: uppercase; }
+.landing-recents-list { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+.landing-recent-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 0.5rem 0.75rem; cursor: pointer; font: inherit; color: var(--text); text-align: left;
+}
+.landing-recent-row:hover { border-color: var(--accent); }
+.landing-recent-alias { font-size: 0.85rem; }
+.landing-recent-outcome { font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; padding: 0.15rem 0.45rem; border-radius: 999px; }
+
 .landing-stats { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 1.8rem; }
 .stat-chip {
   display: flex; flex-direction: column; gap: 0.1rem;
