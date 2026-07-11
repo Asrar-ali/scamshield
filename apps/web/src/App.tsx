@@ -1,170 +1,189 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Event, TacticId } from './types';
-import { TACTIC_LABELS } from './types';
+import type { Event } from './types';
+import { Header, type CallState } from './components/Header';
+import { Transcript, type Line, type Outcome } from './components/Transcript';
+import { RiskGauge } from './components/RiskGauge';
+import { TacticsPanel, type TacticHit } from './components/TacticsPanel';
+import { InterventionsPanel, type Intervention } from './components/InterventionsPanel';
+import { TakeoverFlash } from './components/TakeoverFlash';
+import { FamilyAlertToast, type AlertToast } from './components/FamilyAlertToast';
+import { Leaderboard } from './components/Leaderboard';
+import { useElapsedTimer } from './hooks/useElapsedTimer';
+import { useVoiceOutput } from './hooks/useVoiceOutput';
+import { startSession, sendTurn, endSession } from './lib/api';
 
-interface TacticHit {
-  tactic: TacticId;
-  confidence: number;
-  evidence: string;
-  ts: number;
-}
+const MUTE_STORAGE_KEY = 'scamshield.muted';
+const TOAST_LIFETIME_MS = 7000;
 
-interface Line {
-  role: 'scammer' | 'grandma' | 'guardian';
-  text: string;
-  ts: number;
-}
-
-interface Intervention {
-  level: 'coach' | 'takeover' | 'alert';
-  text: string;
-  ts: number;
+function readStoredMute(): boolean {
+  try {
+    return localStorage.getItem(MUTE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [ended, setEnded] = useState(false);
+  const [callState, setCallState] = useState<CallState>('idle');
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [risk, setRisk] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
   const [hits, setHits] = useState<TacticHit[]>([]);
   const [interventions, setInterventions] = useState<Intervention[]>([]);
+  const [outcome, setOutcome] = useState<Outcome>(null);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const transcriptRef = useRef<HTMLDivElement>(null);
+  const [startBusy, setStartBusy] = useState(false);
+  const [turnBusy, setTurnBusy] = useState(false);
+  const [muted, setMuted] = useState(readStoredMute);
+  const [takeoverTrigger, setTakeoverTrigger] = useState(0);
+  const [toasts, setToasts] = useState<AlertToast[]>([]);
+  const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
+
+  const toastIdRef = useRef(0);
+  const voice = useVoiceOutput(muted);
+  const elapsed = useElapsedTimer(startedAt, callState === 'live');
+
+  const pushToast = useCallback((text: string) => {
+    const id = (toastIdRef.current += 1);
+    setToasts((prev) => [...prev, { id, text }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), TOAST_LIFETIME_MS);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   useEffect(() => {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
     ws.onmessage = (msg) => {
-      const event = JSON.parse(msg.data) as Event;
-      if (event.type === 'utterance') setLines((prev) => [...prev, { role: event.role, text: event.text, ts: event.ts }]);
-      if (event.type === 'tactic') setHits((prev) => [{ tactic: event.tactic, confidence: event.confidence, evidence: event.evidence, ts: event.ts }, ...prev]);
-      if (event.type === 'risk') setRisk(event.score);
-      if (event.type === 'intervention') setInterventions((prev) => [{ level: event.level, text: event.text, ts: event.ts }, ...prev]);
-      if (event.type === 'session' && event.state === 'end') setEnded(true);
+      const event = JSON.parse(msg.data as string) as Event;
+      switch (event.type) {
+        case 'utterance':
+          setLines((prev) => [...prev, { role: event.role, text: event.text, ts: event.ts }]);
+          if (event.role !== 'scammer') voice.enqueue(event.text, event.role);
+          break;
+        case 'tactic':
+          setHits((prev) => [{ tactic: event.tactic, confidence: event.confidence, evidence: event.evidence, ts: event.ts }, ...prev]);
+          break;
+        case 'risk':
+          setRisk(event.score);
+          break;
+        case 'intervention':
+          setInterventions((prev) => [{ level: event.level, text: event.text, ts: event.ts }, ...prev]);
+          if (event.level === 'takeover') {
+            setOutcome('caught');
+            setTakeoverTrigger((t) => t + 1);
+          }
+          if (event.level === 'alert') pushToast(event.text);
+          break;
+        case 'session':
+          if (event.state === 'end') {
+            setCallState('ended');
+            setLeaderboardRefresh((r) => r + 1);
+          }
+          break;
+        default:
+          break;
+      }
     };
     return () => ws.close();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushToast]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' });
-  }, [lines]);
-
-  const startSession = useCallback(async () => {
+  const startCall = useCallback(async (alias: string) => {
+    setStartBusy(true);
     setLines([]);
     setHits([]);
     setInterventions([]);
+    setToasts([]);
+    setOutcome(null);
     setRisk(0);
-    setEnded(false);
-    const res = await fetch('/api/session/start', { method: 'POST' });
-    const data = (await res.json()) as { sessionId: string };
-    setSessionId(data.sessionId);
-  }, []);
-
-  const sendTurn = useCallback(async () => {
-    if (!sessionId || !input.trim() || busy || ended) return;
-    setBusy(true);
-    const text = input.trim();
     setInput('');
     try {
-      await fetch('/api/turn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, text }),
-      });
+      const data = await startSession(alias || 'Anonymous Scammer');
+      setSessionId(data.sessionId);
+      setStartedAt(Date.now());
+      setCallState('live');
+    } catch {
+      setCallState('idle');
     } finally {
-      setBusy(false);
+      setStartBusy(false);
     }
-  }, [sessionId, input, busy, ended]);
+  }, []);
 
-  const riskLevel = risk >= 80 ? 'critical' : risk >= 45 ? 'elevated' : 'low';
-  const activeTactics = [...new Set(hits.map((h) => h.tactic))];
+  const submitTurn = useCallback(
+    async (overrideText?: string) => {
+      const text = (overrideText ?? input).trim();
+      if (!sessionId || !text || turnBusy || callState !== 'live') return;
+      setTurnBusy(true);
+      setInput('');
+      try {
+        const data = await sendTurn(sessionId, text);
+        if (data.ended) setCallState('ended');
+      } catch {
+        // Server unreachable — leave the call live so the judge can retry.
+      } finally {
+        setTurnBusy(false);
+      }
+    },
+    [sessionId, input, turnBusy, callState],
+  );
+
+  const giveUp = useCallback(async () => {
+    if (!sessionId) return;
+    setCallState('ended');
+    setOutcome('gave_up');
+    setLeaderboardRefresh((r) => r + 1);
+    try {
+      await endSession(sessionId);
+    } catch {
+      // Best-effort — the UI already reflects the judge's decision to bail.
+    }
+  }, [sessionId]);
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(MUTE_STORAGE_KEY, next ? '1' : '0');
+      } catch {
+        // Storage may be unavailable (private mode) — mute still works for the session.
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <div className="app">
-      <header>
-        <div className="brand">
-          <span className="shield">🛡</span> ScamShield <em>Live</em>
-        </div>
-        <div className={`conn ${connected ? 'on' : 'off'}`}>{connected ? 'LIVE' : 'DISCONNECTED'}</div>
-      </header>
+      <TakeoverFlash trigger={takeoverTrigger} />
+      <FamilyAlertToast toasts={toasts} onDismiss={dismissToast} />
+      <Header connected={connected} callState={callState} elapsed={elapsed} muted={muted} onToggleMute={toggleMute} />
 
       <main>
-        <section className="panel transcript-panel">
-          <h2>Call Transcript</h2>
-          <div className="transcript" ref={transcriptRef}>
-            {lines.length === 0 && <p className="empty">Start a session, then play the scammer. Try to trick Rose.</p>}
-            {lines.map((l, i) => (
-              <div key={i} className={`line ${l.role}`}>
-                <span className="who">{l.role === 'scammer' ? 'YOU (scammer)' : l.role === 'grandma' ? 'ROSE' : 'GUARDIAN'}</span>
-                <p>{l.text}</p>
-              </div>
-            ))}
-          </div>
-          <div className="composer">
-            {!sessionId || ended ? (
-              <button className="primary" onClick={startSession}>
-                {ended ? 'Call terminated — start a new call' : 'Start the call'}
-              </button>
-            ) : (
-              <>
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendTurn()}
-                  placeholder="Say something to Rose… (you are the scammer)"
-                  disabled={busy}
-                  autoFocus
-                />
-                <button className="primary" onClick={sendTurn} disabled={busy || !input.trim()}>
-                  {busy ? '…' : 'Send'}
-                </button>
-              </>
-            )}
-          </div>
-        </section>
+        <Transcript
+          lines={lines}
+          live={callState === 'live'}
+          ended={callState === 'ended'}
+          outcome={outcome}
+          sessionActive={sessionId !== null}
+          startBusy={startBusy}
+          onStart={startCall}
+          input={input}
+          onInputChange={setInput}
+          onSubmit={submitTurn}
+          onGiveUp={giveUp}
+          turnBusy={turnBusy}
+        />
 
         <section className="side">
-          <div className={`panel risk risk-${riskLevel}`}>
-            <h2>Scam Risk</h2>
-            <div className="risk-score">{risk}</div>
-            <div className="risk-bar">
-              <div className="risk-fill" style={{ width: `${risk}%` }} />
-            </div>
-            <div className="risk-label">{riskLevel.toUpperCase()}</div>
-          </div>
-
-          <div className="panel">
-            <h2>Manipulation Tactics Detected</h2>
-            <div className="tactics">
-              {activeTactics.length === 0 && <p className="empty">Nothing yet. Rose is safe… for now.</p>}
-              {activeTactics.map((t) => {
-                const latest = hits.find((h) => h.tactic === t)!;
-                return (
-                  <div key={t} className="tactic-card">
-                    <div className="tactic-name">{TACTIC_LABELS[t]}</div>
-                    <div className="tactic-evidence">“{latest.evidence}”</div>
-                    <div className="tactic-conf">{Math.round(latest.confidence * 100)}%</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>Guardian Interventions</h2>
-            <div className="interventions">
-              {interventions.length === 0 && <p className="empty">Guardian is watching silently.</p>}
-              {interventions.map((iv, i) => (
-                <div key={i} className={`intervention ${iv.level}`}>
-                  <span className="level">{iv.level.toUpperCase()}</span>
-                  <p>{iv.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+          <RiskGauge risk={risk} />
+          <TacticsPanel hits={hits} />
+          <InterventionsPanel interventions={interventions} />
+          <Leaderboard refreshSignal={leaderboardRefresh} />
         </section>
       </main>
     </div>
