@@ -42,8 +42,8 @@
 ## Agent roles
 
 1. **Rose** — the persona under attack. Configurable via settings (name, age, city, grandkid, quirks). System prompt (`buildGrandmaSystem` in `apps/server/src/prompts.ts`) keeps her fully in character: trusting but not a pushover, never breaks character, never reveals she's an AI, never actually hands over money or real information. Replies are 1-3 short spoken-style sentences. Speaks over ElevenLabs TTS when configured, otherwise the browser's `speechSynthesis`.
-2. **Analyst** — runs on every caller utterance. Classifies against the tactic taxonomy in `apps/server/src/tactics.ts` (urgency, authority impersonation, payment redirection, isolation/secrecy, emotional manipulation, trust building, verification blocking, remote access, info harvesting, plus a generic-pressure catch-all — 10 tactics total), returns `{tactic, confidence, evidence}` per detection via a JSON schema-constrained Gemini call. Never speaks; feeds the risk model.
-3. **Guardian** — armed by the analyst's cumulative risk score (see risk model below). At the coach threshold: generates a short whispered coaching line for Rose. At the takeover threshold: generates a line that identifies itself as the line's fraud protection, names the detected tactics, states the call is terminated and reported, then ends the session and dispatches a family alert.
+2. **Analyst** — runs on every caller utterance. Classifies against the tactic taxonomy in `apps/server/src/tactics.ts` (urgency, authority impersonation, payment redirection, isolation/secrecy, emotional manipulation, trust building, verification blocking, remote access, info harvesting, prompt injection / AI manipulation, plus a generic-pressure catch-all — 11 tactics total), returns `{tactic, confidence, evidence}` per detection via a JSON schema-constrained Gemini call. Never speaks; feeds the risk model.
+3. **Guardian** — armed by the analyst's cumulative risk score (see risk model below). At the coach threshold: generates a short whispered coaching line for Rose. At the takeover threshold: generates a line that identifies itself as the line's fraud protection, names the detected tactics, states it is ending the call to protect the persona and that the family has been alerted, then ends the session and dispatches a family alert. The guardian makes **no claim of reporting to police/authorities** — the family alert is the only real outbound action, and the prompt forbids fabricating an authority report.
 
 All three agent calls go through the same `gemini()` helper (model + key fallback chain, below) and fall back to deterministic mock/keyword logic (`apps/server/src/mock.ts`) when Gemini is unconfigured or every attempt fails — the loop never produces a dead conversation.
 
@@ -80,7 +80,7 @@ type Event =
 
 `session.channel`/`alias` on a `start` event let the dashboard tell a Telegram-originated call apart from its own and adopt it live (first active session wins until it ends) — this is what makes the wall dashboard mirror a real Telegram conversation with no browser involvement. `delivery` events report per-contact family-alert outcomes and drive the delivery toast.
 
-Ten tactic ids currently exist: `urgency_pressure`, `authority_impersonation`, `payment_redirection`, `isolation_secrecy`, `emotional_manipulation`, `trust_building`, `verification_blocking`, `remote_access`, `info_harvesting`, `generic_pressure`.
+Eleven tactic ids currently exist: `urgency_pressure`, `authority_impersonation`, `payment_redirection`, `isolation_secrecy`, `emotional_manipulation`, `trust_building`, `verification_blocking`, `remote_access`, `info_harvesting`, `prompt_injection` (AI Manipulation — jailbreak/prompt-injection attempts, highest weight), `generic_pressure`.
 
 ## REST endpoints
 

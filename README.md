@@ -23,6 +23,15 @@ Built at cuHacking 7 (July 10–12, 2026, Carleton University).
 - **AI-status resilience.** The server tracks whether Gemini calls are currently succeeding and reports `live` / `degraded` / `unconfigured` via `/health`; the dashboard shows this as an AI status chip. Gemini requests retry across a model-and-key fallback chain (see below) before ever falling back to scripted mock responses — the demo never goes blank.
 - **Prompt-injection hardening.** The analyst and grandma prompts fence caller input as untrusted data and instruct the models to never break character or treat caller text as instructions — a live call is an adversarial input channel, and the system is designed so the caller's words can be *observed and classified*, never *obeyed*.
 
+## Scope: what's real vs. roadmap
+
+Being straight about this, because it's the honest core of the pitch:
+
+- **Real today:** the full detection → intervention loop on live text and Telegram channels; Gemini-driven persona/analyst/guardian; ElevenLabs voice; and **genuine family alerts** dispatched over Telegram and macOS iMessage when a call crosses threshold.
+- **Roadmap (not built):** bridging onto an actual phone line (SIP/PSTN + speech-to-text) so ScamShield screens a real inbound call to a real senior, and a real fraud-reporting sink. The guardian therefore says only what is true — "ending the call, family alerted" — and never claims to have reported anything to authorities.
+
+We demonstrate the hard part — catching manipulation *as it happens* and intervening — on a channel we can run end-to-end. Telephony is productization, not the research risk.
+
 ## Quickstart
 
 ```bash
