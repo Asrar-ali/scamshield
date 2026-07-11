@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Event } from './types';
-import { Header, type CallState } from './components/Header';
+import { Header, type CallState, type AiStatus } from './components/Header';
 import { Landing } from './components/Landing';
 import { Transcript, type Line, type Outcome, type SessionChannel } from './components/Transcript';
 import { RiskGauge } from './components/RiskGauge';
@@ -58,6 +58,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(DISCONNECTED_TELEGRAM);
   const [deliveryToasts, setDeliveryToasts] = useState<DeliveryToastItem[]>([]);
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
 
   const toastIdRef = useRef(0);
   const deliveryToastIdRef = useRef(0);
@@ -73,6 +74,26 @@ export default function App() {
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/health');
+        if (!res.ok) return;
+        const data = (await res.json()) as { ai?: AiStatus };
+        if (!cancelled && data.ai) setAiStatus(data.ai);
+      } catch {
+        // Health polling is cosmetic — never surface errors.
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const pushToast = useCallback((text: string) => {
     const id = (toastIdRef.current += 1);
@@ -276,6 +297,7 @@ export default function App() {
         callState={callState}
         elapsed={elapsed}
         muted={muted}
+        aiStatus={aiStatus}
         onToggleMute={toggleMute}
         onOpenSettings={() => setSettingsOpen(true)}
       />

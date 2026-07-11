@@ -2,15 +2,23 @@ import { Wordmark } from './Wordmark';
 import { GearIcon } from './icons';
 
 export type CallState = 'idle' | 'live' | 'ended';
+export type AiStatus = 'live' | 'degraded' | 'unconfigured';
 
 interface HeaderProps {
   connected: boolean;
   callState: CallState;
   elapsed: string;
   muted: boolean;
+  aiStatus: AiStatus | null;
   onToggleMute: () => void;
   onOpenSettings: () => void;
 }
+
+const AI_LABEL: Record<AiStatus, string> = {
+  live: 'LIVE AI',
+  degraded: 'OFFLINE AI',
+  unconfigured: 'MOCK AI',
+};
 
 const STATE_LABEL: Record<CallState, string> = {
   idle: 'NO CALL',
@@ -27,7 +35,7 @@ function SoundIcon({ muted }: { muted: boolean }) {
   );
 }
 
-export function Header({ connected, callState, elapsed, muted, onToggleMute, onOpenSettings }: HeaderProps) {
+export function Header({ connected, callState, elapsed, muted, aiStatus, onToggleMute, onOpenSettings }: HeaderProps) {
   return (
     <header className="app-header">
       <Wordmark />
@@ -51,6 +59,11 @@ export function Header({ connected, callState, elapsed, muted, onToggleMute, onO
           <span className="conn-dot" />
           {connected ? 'CONNECTED' : 'OFFLINE'}
         </div>
+        {aiStatus && (
+          <div className={`ai-chip ai-chip-${aiStatus}`} title="Whether Rose is powered by the live model right now">
+            {AI_LABEL[aiStatus]}
+          </div>
+        )}
         <button type="button" className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Settings">
           <GearIcon width={16} height={16} />
         </button>

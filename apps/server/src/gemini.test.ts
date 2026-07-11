@@ -57,6 +57,6 @@ describe('gemini', () => {
       ok: true,
       json: async () => ({ candidates: [] }),
     }) as unknown as typeof fetch;
-    await expect(gemini('system', [])).rejects.toThrow('Gemini returned an empty response');
+    await expect(gemini('system', [])).rejects.toThrow('All Gemini keys/models exhausted');
   });
 });

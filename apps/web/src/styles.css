@@ -151,6 +151,14 @@ button { font-family: inherit; }
 .conn .conn-dot { width: 6px; height: 6px; border-radius: 999px; }
 .conn.on { color: #5eea8d; } .conn.on .conn-dot { background: #5eea8d; box-shadow: 0 0 7px #5eea8d; }
 .conn.off { color: #ff8080; } .conn.off .conn-dot { background: #ff8080; }
+.ai-chip {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.12em; font-weight: 600;
+  padding: 0.32rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
+}
+.ai-chip-live { color: #5eea8d; border-color: #1c4a2e; }
+.ai-chip-degraded { color: var(--warn); border-color: var(--warn); }
+.ai-chip-unconfigured { color: var(--muted); }
 
 /* ---------- landing hero ---------- */
 .landing {

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Detection, Event } from './types.js';
 import { TACTIC_BY_ID } from './tactics.js';
 import { ANALYST_SYSTEM, GRANDMA_SYSTEM, GUARDIAN_COACH_SYSTEM, GUARDIAN_TAKEOVER_SYSTEM } from './prompts.js';
-import { gemini, geminiEnabled } from './gemini.js';
+import { gemini, geminiEnabled, aiStatus } from './gemini.js';
 import { mockAnalyze, mockCoach, mockGrandma, mockTakeover } from './mock.js';
 import { applyDetections, canTakeover, shouldCoach } from './risk.js';
 import { sanitizeAlias } from './alias.js';
@@ -268,7 +268,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   }
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, mode: geminiEnabled() ? 'gemini' : 'mock' });
+    res.json({ ok: true, mode: geminiEnabled() ? 'gemini' : 'mock', ai: aiStatus() });
   });
 
   app.post('/api/session/start', (req, res) => {

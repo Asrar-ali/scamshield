@@ -165,7 +165,7 @@ describe('server integration', () => {
   it('reports mode on /health', async () => {
     const res = await request(baseUrl).get('/health');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, mode: 'mock' });
+    expect(res.body).toEqual({ ok: true, mode: 'mock', ai: 'unconfigured' });
   });
 
   it('broadcasts a session-start event with dashboard channel and alias', async () => {
