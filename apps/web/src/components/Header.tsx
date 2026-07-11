@@ -13,6 +13,8 @@ interface HeaderProps {
   aiStatus: AiStatus | null;
   onToggleMute: () => void;
   onOpenSettings: () => void;
+  /** Return to the landing view. Omitted while a call is live (nothing to go back to). */
+  onHome?: () => void;
 }
 
 const CONN_LABEL: Record<ConnState, string> = {
@@ -42,10 +44,10 @@ function SoundIcon({ muted }: { muted: boolean }) {
   );
 }
 
-export function Header({ connState, callState, elapsed, muted, aiStatus, onToggleMute, onOpenSettings }: HeaderProps) {
+export function Header({ connState, callState, elapsed, muted, aiStatus, onToggleMute, onOpenSettings, onHome }: HeaderProps) {
   return (
     <header className="app-header">
-      <Wordmark />
+      <Wordmark onHome={onHome} />
       <div className="header-status">
         <div className={`call-state call-state-${callState}`}>
           <span className="dot" />

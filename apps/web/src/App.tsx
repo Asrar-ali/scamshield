@@ -350,6 +350,28 @@ export default function App() {
     });
   }, []);
 
+  // Return to the landing hero: detach the dashboard from any ended/replayed
+  // session and reset transient state. (Only offered when a call isn't live.)
+  const goHome = useCallback(() => {
+    sessionIdRef.current = null;
+    setSessionId(null);
+    setCallState('idle');
+    setReplay(null);
+    setOutcome(null);
+    setRisk(0);
+    setRiskSamples([]);
+    setLines([]);
+    setHits([]);
+    setFeed([]);
+    setToasts([]);
+    setDeliveryToasts([]);
+    setStartedAt(null);
+    setEndedAt(null);
+    setSessionChannel(null);
+    setSessionAlias(null);
+    setInput('');
+  }, []);
+
   const inCall = callState !== 'idle';
   const connected = connState === 'connected';
 
@@ -373,6 +395,7 @@ export default function App() {
         aiStatus={aiStatus}
         onToggleMute={toggleMute}
         onOpenSettings={() => setSettingsOpen(true)}
+        onHome={callState === 'live' ? undefined : goHome}
       />
 
       {replay ? (

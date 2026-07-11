@@ -110,6 +110,9 @@ button { font-family: inherit; }
   z-index: 10;
 }
 .wordmark { display: flex; align-items: center; gap: 0.55rem; }
+.wordmark-btn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; border-radius: 8px; }
+.wordmark-btn:hover { opacity: 0.85; }
+.wordmark-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .wordmark-shield { filter: drop-shadow(0 3px 8px rgba(91, 141, 255, 0.5)); }
 .wordmark-text { font-size: 1.24rem; font-weight: 800; letter-spacing: -0.01em; }
 .wordmark-text span { color: transparent; background: linear-gradient(92deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; }
