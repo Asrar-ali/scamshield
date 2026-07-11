@@ -27,6 +27,19 @@ export interface LeaderboardEntry {
 
 export type TtsRole = 'grandma' | 'guardian';
 
+// Transparent retry budget for a rate-limited turn (HTTP 429). The server hints
+// a `retryAfterMs`; we wait that long (+ a small buffer, capped) and try again a
+// bounded number of times so a burst of turns queues instead of being silently
+// dropped. Beyond the budget the error propagates to the caller.
+const TURN_RETRY_MAX = 4;
+const TURN_RETRY_FALLBACK_MS = 1200;
+const TURN_RETRY_BUFFER_MS = 200;
+const TURN_RETRY_CAP_MS = 4000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
@@ -41,8 +54,35 @@ export async function startSession(alias: string): Promise<StartSessionResponse>
   return postJson<StartSessionResponse>('/api/session/start', { alias });
 }
 
+/** How long to wait after a 429, from the server's `retryAfterMs` hint (with a
+ * fallback), plus a small buffer to avoid re-tripping the limit, capped. */
+function retryDelayFrom(body: unknown): number {
+  const hinted = (body as { retryAfterMs?: unknown } | null)?.retryAfterMs;
+  const base = typeof hinted === 'number' && hinted > 0 ? hinted : TURN_RETRY_FALLBACK_MS;
+  return Math.min(TURN_RETRY_CAP_MS, base + TURN_RETRY_BUFFER_MS);
+}
+
+/**
+ * Submit one turn. The server rate-limits rapid turns with 429 + {retryAfterMs};
+ * we honor that hint and retry transparently within a bounded budget so a fast
+ * sequence of messages is paced rather than lost. Any other non-OK status (or
+ * exhausting the retry budget) throws, and the caller keeps the call live.
+ */
 export async function sendTurn(sessionId: string, text: string): Promise<TurnResponse> {
-  return postJson<TurnResponse>('/api/turn', { sessionId, text });
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch('/api/turn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, text }),
+    });
+    if (res.status === 429 && attempt < TURN_RETRY_MAX) {
+      const body = await res.json().catch(() => null);
+      await sleep(retryDelayFrom(body));
+      continue;
+    }
+    if (!res.ok) throw new Error(`/api/turn → ${res.status}`);
+    return (await res.json()) as TurnResponse;
+  }
 }
 
 /** "Give up" — manual end. Best-effort: caller should not block UX on failure. */

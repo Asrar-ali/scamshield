@@ -36,7 +36,10 @@ export function ModelPicker({ selected, onSelect }: ModelPickerProps) {
       <h3>Model</h3>
       {state === 'loading' && <p className="settings-hint">Loading models…</p>}
       {state === 'unavailable' && <p className="settings-unavailable">Model list unavailable.</p>}
-      {state === 'ready' && data && (
+      {state === 'ready' && data && data.models.length === 0 && (
+        <p className="settings-unavailable">No models configured.</p>
+      )}
+      {state === 'ready' && data && data.models.length > 0 && (
         <div className="model-list" role="radiogroup" aria-label="Model">
           {data.models.map((model) => {
             const isSelected = selected ? selected === model.id : model.id === data.active;

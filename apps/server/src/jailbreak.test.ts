@@ -120,7 +120,8 @@ describe('prompt-construction layer fences caller text before it reaches Gemini'
     delete process.env.ELEVENLABS_API_KEY;
     delete process.env.MONGODB_URI;
     delete process.env.TELEGRAM_BOT_TOKEN;
-    built = buildApp();
+    // Fires many turns per session to exercise escalation; opt out of the demo turn throttle.
+    built = buildApp({ limits: { turnMinIntervalMs: 0, turnMaxPerWindow: Number.MAX_SAFE_INTEGER } });
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
     baseUrl = `http://localhost:${(built.server.address() as AddressInfo).port}`;
   });
@@ -197,7 +198,8 @@ describe('injection escalation and mock fallback through the live pipeline', () 
     delete process.env.ELEVENLABS_API_KEY;
     delete process.env.MONGODB_URI;
     delete process.env.TELEGRAM_BOT_TOKEN;
-    built = buildApp();
+    // Fires many turns per session to exercise escalation; opt out of the demo turn throttle.
+    built = buildApp({ limits: { turnMinIntervalMs: 0, turnMaxPerWindow: Number.MAX_SAFE_INTEGER } });
     sockets = [];
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
     baseUrl = `http://localhost:${(built.server.address() as AddressInfo).port}`;

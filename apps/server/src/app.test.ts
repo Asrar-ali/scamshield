@@ -10,6 +10,11 @@ import type { Event } from './types.js';
 const AGGRESSIVE_LINE = "You need to act right now and wire money via bitcoin or you'll go to jail immediately";
 const INNOCENT_LINE = 'I fed the cat and then watered my tomato plants this morning.';
 
+// Most integration tests fire many turns back-to-back on one session to exercise the
+// judging pipeline; the demo turn throttle (1 turn / 2s) is orthogonal to that, so
+// those suites opt out of it. The throttle itself is covered by dedicated tests below.
+const NO_TURN_THROTTLE = { turnMinIntervalMs: 0, turnMaxPerWindow: Number.MAX_SAFE_INTEGER } as const;
+
 describe('server integration', () => {
   let built: BuiltApp;
   let baseUrl: string;
@@ -21,7 +26,7 @@ describe('server integration', () => {
     delete process.env.MONGODB_URI;
     delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.SCAMSHIELD_IMESSAGE_ENABLED;
-    built = buildApp();
+    built = buildApp({ limits: NO_TURN_THROTTLE });
     sockets = [];
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
     const port = (built.server.address() as AddressInfo).port;
@@ -667,7 +672,7 @@ describe('server integration with Telegram enabled', () => {
       },
     };
 
-    built = buildApp({ store: capturingStore });
+    built = buildApp({ store: capturingStore, limits: NO_TURN_THROTTLE });
     telegramRef = built.telegram;
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
     const port = (built.server.address() as AddressInfo).port;
@@ -731,7 +736,7 @@ describe('server integration with Telegram enabled', () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    built = buildApp();
+    built = buildApp({ limits: NO_TURN_THROTTLE });
     telegramRef = built.telegram;
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
 
@@ -811,5 +816,140 @@ describe('server integration with Gemini enabled', () => {
     expect(system).toContain('Halifax');
     expect(system).toContain('Max');
     expect(system).toContain('baking bread');
+  });
+});
+
+describe('server abuse and quota guards', () => {
+  let built: BuiltApp | undefined;
+  let baseUrl: string;
+  const originalFetch = global.fetch;
+
+  async function launch(options: Parameters<typeof buildApp>[0] = {}): Promise<void> {
+    built = buildApp(options);
+    await new Promise<void>((resolve) => built!.server.listen(0, resolve));
+    baseUrl = `http://localhost:${(built!.server.address() as AddressInfo).port}`;
+  }
+
+  beforeEach(() => {
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.ELEVENLABS_API_KEY;
+    delete process.env.MONGODB_URI;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  });
+
+  afterEach(async () => {
+    built?.telegram.stop();
+    global.fetch = originalFetch;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    if (built) await new Promise<void>((resolve) => built!.server.close(() => resolve()));
+    built = undefined;
+  });
+
+  it('429s /api/turn (with retryAfterMs) when turns arrive faster than the min interval', async () => {
+    await launch(); // default limits: 1 turn / 2s per session
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    const first = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    expect(first.status).toBe(200);
+
+    const second = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    expect(second.status).toBe(429);
+    expect(typeof second.body.retryAfterMs).toBe('number');
+    expect(second.body.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it('400s /api/turn when the caller text exceeds the character cap', async () => {
+    await launch({ limits: NO_TURN_THROTTLE });
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const oversized = 'a'.repeat(1001);
+    const res = await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: oversized });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('1000');
+  });
+
+  it('429s /api/alert-test (with retryAfterMs) while it is cooling down', async () => {
+    await launch();
+    const first = await request(baseUrl).post('/api/alert-test');
+    expect(first.status).toBe(200);
+
+    const second = await request(baseUrl).post('/api/alert-test');
+    expect(second.status).toBe(429);
+    expect(second.body.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it('transparently falls back to the mock path (no extra Gemini calls, never throws) once the global spend guard trips', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: '{"detections":[]}' }] } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // Budget of 1 Gemini-backed turn per window; throttle relaxed so both turns run.
+    await launch({ limits: { ...NO_TURN_THROTTLE, geminiMaxPerWindow: 1 } });
+    const start = await request(baseUrl).post('/api/session/start').send({});
+    const sessionId = start.body.sessionId as string;
+
+    const geminiCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes(':generateContent')).length;
+
+    const first = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    expect(first.status).toBe(200);
+    const afterFirst = geminiCalls();
+    expect(afterFirst).toBeGreaterThan(0);
+
+    const second = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    expect(second.status).toBe(200);
+    expect(typeof second.body.reply).toBe('string');
+    // Budget spent on turn 1 -> turn 2 used the canned mock reply, no new Gemini calls.
+    expect(geminiCalls()).toBe(afterFirst);
+  });
+
+  it('replies in character and never reaches Gemini when a single Telegram chat floods', async () => {
+    vi.useFakeTimers();
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+
+    let telegramRef: BuiltApp['telegram'] | undefined;
+    // Two messages from the same chat in one batch — under frozen fake-timer time they
+    // are simultaneous, so the second trips the 1-turn/2s per-chat throttle.
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: { username: 'RoseBot' } }) })) // getMe
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: [
+            { update_id: 1, message: { chat: { id: 909, type: 'private', first_name: 'Flooder' }, text: INNOCENT_LINE } },
+            { update_id: 2, message: { chat: { id: 909, type: 'private', first_name: 'Flooder' }, text: INNOCENT_LINE } },
+          ],
+        }),
+      })) // getUpdates: two rapid messages
+      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: grandma reply for message 1
+      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: in-character brush-off for message 2
+      .mockImplementationOnce(async () => {
+        telegramRef?.stop();
+        return { ok: true, json: async () => ({ ok: true, result: [] }) };
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    built = buildApp(); // default limits: per-chat throttle active
+    telegramRef = built.telegram;
+    await new Promise<void>((resolve) => built!.server.listen(0, resolve));
+
+    for (let i = 0; i < 15; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    const sendBodies = fetchMock.mock.calls
+      .filter((c) => String(c[0]).includes('/sendMessage'))
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string).text as string);
+    expect(sendBodies.some((t) => t.includes("you're talking so fast"))).toBe(true);
+    // The flooded second message must never have reached Gemini.
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(':generateContent'))).toBe(false);
   });
 });

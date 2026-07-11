@@ -1,11 +1,12 @@
 import { Wordmark } from './Wordmark';
 import { GearIcon } from './icons';
+import type { ConnState } from '../hooks/useLiveSocket';
 
 export type CallState = 'idle' | 'live' | 'ended';
 export type AiStatus = 'live' | 'degraded' | 'unconfigured';
 
 interface HeaderProps {
-  connected: boolean;
+  connState: ConnState;
   callState: CallState;
   elapsed: string;
   muted: boolean;
@@ -13,6 +14,12 @@ interface HeaderProps {
   onToggleMute: () => void;
   onOpenSettings: () => void;
 }
+
+const CONN_LABEL: Record<ConnState, string> = {
+  connected: 'CONNECTED',
+  reconnecting: 'RECONNECTING',
+  offline: 'OFFLINE',
+};
 
 const AI_LABEL: Record<AiStatus, string> = {
   live: 'LIVE AI',
@@ -35,7 +42,7 @@ function SoundIcon({ muted }: { muted: boolean }) {
   );
 }
 
-export function Header({ connected, callState, elapsed, muted, aiStatus, onToggleMute, onOpenSettings }: HeaderProps) {
+export function Header({ connState, callState, elapsed, muted, aiStatus, onToggleMute, onOpenSettings }: HeaderProps) {
   return (
     <header className="app-header">
       <Wordmark />
@@ -55,9 +62,9 @@ export function Header({ connected, callState, elapsed, muted, aiStatus, onToggl
           <SoundIcon muted={muted} />
           {muted ? 'Muted' : 'Sound on'}
         </button>
-        <div className={`conn ${connected ? 'on' : 'off'}`}>
+        <div className={`conn conn-${connState}`}>
           <span className="conn-dot" />
-          {connected ? 'CONNECTED' : 'OFFLINE'}
+          {CONN_LABEL[connState]}
         </div>
         {aiStatus && (
           <div className={`ai-chip ai-chip-${aiStatus}`} title="Whether Rose is powered by the live model right now">

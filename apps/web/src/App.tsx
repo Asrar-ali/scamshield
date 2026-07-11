@@ -21,6 +21,7 @@ import {
 } from './lib/autopsy';
 import { useElapsedTimer } from './hooks/useElapsedTimer';
 import { useVoiceOutput } from './hooks/useVoiceOutput';
+import { useLiveSocket } from './hooks/useLiveSocket';
 import {
   startSession,
   sendTurn,
@@ -45,7 +46,6 @@ function readStoredMute(): boolean {
 }
 
 export default function App() {
-  const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [callState, setCallState] = useState<CallState>('idle');
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -198,23 +198,11 @@ export default function App() {
     };
   }, [settingsOpen]);
 
-  useEffect(() => {
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-    // Guard against React StrictMode's dev double-mount: if this effect is torn
-    // down (its cleanup ran), the socket it created must never deliver events —
-    // otherwise a transient second connection double-fires enqueue and every
-    // spoken line plays twice.
-    let live = true;
-    ws.onopen = () => {
-      if (live) setConnected(true);
-    };
-    ws.onclose = () => {
-      if (live) setConnected(false);
-    };
-    ws.onmessage = (msg) => {
-      if (!live) return;
-      const event = JSON.parse(msg.data as string) as Event;
-      switch (event.type) {
+  // Apply one live event to dashboard state. Passed to useLiveSocket, which owns
+  // the socket lifecycle + reconnect; this stays a pure event→state reducer so a
+  // dropped/reconnected socket never needs special handling here.
+  const handleEvent = useCallback((event: Event) => {
+    switch (event.type) {
         case 'utterance':
           setLines((prev) => [...prev, { role: event.role, text: event.text, ts: event.ts }]);
           if (event.role !== 'scammer') voice.enqueue(event.text, event.role);
@@ -278,14 +266,9 @@ export default function App() {
         default:
           break;
       }
-    };
-    return () => {
-      live = false;
-      ws.onmessage = null;
-      ws.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pushToast]);
+  }, [pushToast, voice]);
+
+  const connState = useLiveSocket(handleEvent);
 
   const startCall = useCallback(async (alias: string) => {
     setStartBusy(true);
@@ -359,6 +342,7 @@ export default function App() {
   }, []);
 
   const inCall = callState !== 'idle';
+  const connected = connState === 'connected';
 
   return (
     <div className={`app ${outcome === 'caught' ? 'app--caught' : ''}`}>
@@ -373,7 +357,7 @@ export default function App() {
         telegramStatus={telegramStatus}
       />
       <Header
-        connected={connected}
+        connState={connState}
         callState={callState}
         elapsed={elapsed}
         muted={muted}
