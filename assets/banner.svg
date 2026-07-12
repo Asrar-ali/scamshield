@@ -1,15 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240">
   <rect width="960" height="240" fill="#0a0a0a"/>
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="g" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
       <stop stop-color="#34d399"/>
       <stop offset="1" stop-color="#10b981"/>
     </linearGradient>
   </defs>
-  <g transform="translate(80,60) scale(5)">
-    <path d="M12 2.2 4 5.2v6.1c0 4.9 3.3 8.7 8 10.5 4.7-1.8 8-5.6 8-10.5V5.2l-8-3Z" fill="url(#g)" stroke="rgba(255,255,255,0.15)" stroke-width="0.6"/>
-    <path d="M8.4 12.1l2.5 2.5 4.7-4.9" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- shield icon matching ShieldMark from the dashboard -->
+  <g transform="translate(72,48) scale(6)">
+    <path d="M12 2.2 4 5.2v6.1c0 4.9 3.3 8.7 8 10.5 4.7-1.8 8-5.6 8-10.5V5.2l-8-3Z" fill="url(#g)" stroke="rgba(255,255,255,0.35)" stroke-width="0.8"/>
+    <path d="M8.4 12.1l2.5 2.5 4.7-4.9" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
-  <text x="240" y="128" font-family="ui-monospace,monospace" font-size="64" font-weight="700" fill="#f5f5f5" letter-spacing="-2">ScamShield</text>
-  <text x="242" y="168" font-family="ui-monospace,monospace" font-size="20" fill="#34d399" letter-spacing="2">SCAM DETECTION · REAL TIME</text>
+  <!-- wordmark -->
+  <text x="248" y="130" font-family="ui-monospace,monospace" font-size="62" font-weight="700" fill="#f5f5f5" letter-spacing="-1">ScamShield</text>
+  <!-- tagline -->
+  <text x="250" y="170" font-family="ui-monospace,monospace" font-size="18" fill="#34d399" letter-spacing="3">SCAM DETECTION · REAL TIME</text>
 </svg>
