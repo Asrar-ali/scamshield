@@ -147,7 +147,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   const settingsManager = createSettingsManager(store);
   // Per-Discord-user monitoring state. 1 Discord user → 1 Session, so each member
   // accumulates risk across everything they say server-wide. Keyed by Discord user id.
-  const watchedUsers = new Map<string, string>(); // userId -> sessionId
+  const watchedUsers = new Map<string, string>(); // `${guildId}:${userId}` -> sessionId
   // Discord users a flag already muted. Further messages are stonewalled (no
   // analysis, no Gemini) so "this user is flagged" stays true instead of a fresh
   // session resetting their risk.
@@ -497,10 +497,12 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   // (a linked promise chain). This matters because a flag must finish — message
   // deleted, user muted, user added to blockedUsers — before the next message from
   // that user is evaluated.
-  const userQueues = new Map<string, Promise<unknown>>();
+  const userQueues = new Map<string, Promise<unknown>>(); // `${guildId}:${userId}` -> queue
   const processMessage = async (msg: DiscordMessage): Promise<{ flagged: boolean }> => {
-    // Already-flagged user: stay muted, no new analysis, no Gemini spend.
-    if (blockedUsers.has(msg.userId)) {
+    const userKey = `${msg.guildId}:${msg.userId}`;
+
+    // Already-flagged user in this server: stay muted, no new analysis, no Gemini spend.
+    if (blockedUsers.has(userKey)) {
       if (msg.raw) {
         const ch = msg.raw.channel;
         if ('send' in ch && typeof ch.send === 'function') {
@@ -527,27 +529,28 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
       utterance = utterance.slice(0, limits.callerTextMaxChars);
     }
 
-    // Find-or-create this user's monitoring session.
-    const existingId = watchedUsers.get(msg.userId);
+    // Find-or-create this user's monitoring session, scoped per guild.
+    const existingId = watchedUsers.get(userKey);
     let session = existingId ? sessions.get(existingId) : undefined;
     if (!session || session.ended) {
       session = createSession(sanitizeAlias(msg.username), msg.userId, msg.avatarUrl);
-      watchedUsers.set(msg.userId, session.id);
+      watchedUsers.set(userKey, session.id);
     }
 
     const result = await runMessage(session, { ...msg, text: utterance });
     if (result.flagged) {
-      watchedUsers.delete(msg.userId);
-      blockedUsers.add(msg.userId);
+      watchedUsers.delete(userKey);
+      blockedUsers.add(userKey);
     }
     return result;
   };
   discord = startDiscordChannel(
     {
       async onMessage(msg) {
-        // Chain behind any in-flight message from the same user so order is preserved
+        // Chain behind any in-flight message from the same user+guild so order is preserved
         // (a flag must land before the next message is evaluated).
-        const tail = userQueues.get(msg.userId) ?? Promise.resolve();
+        const userKey = `${msg.guildId}:${msg.userId}`;
+        const tail = userQueues.get(userKey) ?? Promise.resolve();
         const next = tail.then(
           () => processMessage(msg),
           () => processMessage(msg),
@@ -555,7 +558,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
         // The stored chain swallows rejections so one failure can't poison the queue;
         // the caller still awaits `next`, which surfaces the real outcome.
         userQueues.set(
-          msg.userId,
+          userKey,
           next.then(
             () => undefined,
             () => undefined,
