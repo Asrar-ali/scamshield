@@ -345,9 +345,9 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
 
     // Keep the Discord channel's monitored-user map in sync so the /status
     // endpoint (polled every 3s by the monitor screen) reflects live values.
-    const updateMonitored = (discord as DiscordChannel & { _updateMonitored?: (userId: string, patch: Partial<MonitoredUser>) => void })._updateMonitored;
+    const updateMonitored = (discord as DiscordChannel & { _updateMonitored?: (userId: string, guildId: string, patch: Partial<MonitoredUser>) => void })._updateMonitored;
     if (updateMonitored && msg.userId) {
-      updateMonitored(msg.userId, {
+      updateMonitored(msg.userId, msg.guildId, {
         risk: Math.round(session.risk),
         maxRisk: Math.round(session.maxRisk),
         turns: session.turn,
@@ -453,6 +453,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
       enabled: discordEnabled(),
       botTag: discord.getBotTag(),
       guildName: discord.getGuildName(),
+      guilds: discord.getGuilds(),
       monitoredUsers: discord.getMonitoredUsers(),
       recentUsers: discord.getRecentUsers(),
     });

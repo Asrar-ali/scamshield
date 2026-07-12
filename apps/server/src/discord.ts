@@ -16,6 +16,9 @@ export interface RecentUser {
 export interface MonitoredUser {
   userId: string;
   name: string;
+  avatarUrl?: string;
+  guildId: string;
+  guildName: string;
   risk: number;
   maxRisk: number;
   turns: number;
@@ -61,8 +64,10 @@ export interface DiscordChannel {
   getClient(): Client | null;
   /** Tag the bot logged in as (e.g. "ScamShield#1234"), or null when disabled. */
   getBotTag(): string | null;
-  /** Name of the guild the bot is monitoring, or null. */
+  /** Name of the first guild the bot is monitoring, or null. */
   getGuildName(): string | null;
+  /** All guilds the bot has observed since startup. */
+  getGuilds(): Array<{ id: string; name: string }>;
   /** Members the bot has observed since startup. */
   getRecentUsers(): RecentUser[];
   /** Active monitored-user summaries (risk + tactics seen), for the status endpoint. */
@@ -105,16 +110,17 @@ function relevantMessage(msg: Message): DiscordMessage | null {
 export function startDiscordChannel(callbacks: DiscordCallbacks, options: StartDiscordOptions = {}): DiscordChannel {
   const token = process.env.DISCORD_BOT_TOKEN;
   const recent = new Map<string, RecentUser>();
-  const monitored = new Map<string, MonitoredUser>();
+  const monitored = new Map<string, MonitoredUser>(); // key: `${guildId}:${userId}`
+  const guildNames = new Map<string, string>(); // guildId -> name
   let botTag: string | null = null;
-  let guildName: string | null = null;
   let client: Client | null = null;
   let stopped = false;
 
   const channel: DiscordChannel = {
     getClient: () => client,
     getBotTag: () => botTag,
-    getGuildName: () => guildName,
+    getGuildName: () => (guildNames.size > 0 ? [...guildNames.values()][0] : null),
+    getGuilds: () => [...guildNames.entries()].map(([id, name]) => ({ id, name })),
     getRecentUsers: () => [...recent.values()],
     getMonitoredUsers: () => [...monitored.values()],
     stop: () => {
@@ -129,31 +135,43 @@ export function startDiscordChannel(callbacks: DiscordCallbacks, options: StartD
   // every status check honest.
   if (!token && !options.client) return channel;
 
-  const trackUser = (userId: string, name: string) => {
+  const trackUser = (userId: string, name: string, guildId: string, avatarUrl?: string) => {
     recent.set(userId, { userId, name, lastSeen: Date.now() });
-    if (!monitored.has(userId)) {
-      monitored.set(userId, { userId, name, risk: 0, maxRisk: 0, turns: 0, tactics: [], blocked: false });
+    const key = `${guildId}:${userId}`;
+    if (!monitored.has(key)) {
+      const gName = guildNames.get(guildId) ?? guildId;
+      monitored.set(key, { userId, name, avatarUrl, guildId, guildName: gName, risk: 0, maxRisk: 0, turns: 0, tactics: [], blocked: false });
+    } else if (avatarUrl) {
+      // Update avatar URL if it changes (e.g. user updates their avatar)
+      const cur = monitored.get(key)!;
+      if (cur.avatarUrl !== avatarUrl) monitored.set(key, { ...cur, avatarUrl });
     }
   };
 
   /** Exposed for app.ts to keep the monitored summary in sync as risk accrues. */
-  const updateMonitored = (userId: string, patch: Partial<MonitoredUser>) => {
-    const current = monitored.get(userId);
-    if (current) monitored.set(userId, { ...current, ...patch });
+  const updateMonitored = (userId: string, guildId: string, patch: Partial<MonitoredUser>) => {
+    const key = `${guildId}:${userId}`;
+    const current = monitored.get(key);
+    if (current) monitored.set(key, { ...current, ...patch });
   };
   // Stash on the channel via a symbol-free property so app.ts can call it without
   // a wider interface leak. Kept off the public DiscordChannel surface.
   (channel as DiscordChannel & { _updateMonitored?: typeof updateMonitored })._updateMonitored = updateMonitored;
 
   const handleMessage = async (msg: DiscordMessage): Promise<void> => {
-    trackUser(msg.userId, msg.username);
+    // Capture guild name on first sight (may not be in cache at ready time).
+    if (msg.raw?.guild && !guildNames.has(msg.guildId)) {
+      guildNames.set(msg.guildId, msg.raw.guild.name);
+    }
+    trackUser(msg.userId, msg.username, msg.guildId, msg.avatarUrl);
     try {
       const result = await callbacks.onMessage(msg);
       if (result.flagged) {
         // The host app owns the warning text + message deletion; here we just mark
         // the user as blocked in our monitored summary (for the status endpoint).
-        const m = monitored.get(msg.userId);
-        if (m) monitored.set(msg.userId, { ...m, blocked: true });
+        const key = `${msg.guildId}:${msg.userId}`;
+        const m = monitored.get(key);
+        if (m) monitored.set(key, { ...m, blocked: true });
       }
     } catch (err) {
       log.warn('Discord message handler failed:', err instanceof Error ? err.message : err);
@@ -164,10 +182,10 @@ export function startDiscordChannel(callbacks: DiscordCallbacks, options: StartD
     client = c;
     c.on(Events.ClientReady, (readyClient) => {
       botTag = readyClient.user?.tag ?? null;
-      // Pin the first guild the bot sees as "the monitored guild" for the status chip.
-      const guild = readyClient.guilds.cache.first();
-      guildName = guild?.name ?? null;
-      log.info(`Discord bot ready as ${botTag ?? 'unknown'} in guild ${guildName ?? 'n/a'}`);
+      for (const [id, guild] of readyClient.guilds.cache) {
+        guildNames.set(id, guild.name);
+      }
+      log.info(`Discord bot ready as ${botTag ?? 'unknown'} in ${guildNames.size} guild(s): ${[...guildNames.values()].join(', ') || 'n/a'}`);
     });
     c.on(Events.MessageCreate, (msg: Message) => {
       if (stopped) return;
@@ -193,10 +211,9 @@ export function startDiscordChannel(callbacks: DiscordCallbacks, options: StartD
   realClient
     .login(token)
     .then(() => {
-      if (!guildName) {
-        // Some guilds arrive after ready via caching; pick up the name opportunistically.
-        const guild = realClient.guilds.cache.first();
-        guildName = guild?.name ?? null;
+      // Some guilds arrive after ready via caching; pick up any we missed.
+      for (const [id, guild] of realClient.guilds.cache) {
+        if (!guildNames.has(id)) guildNames.set(id, guild.name);
       }
     })
     .catch((err: unknown) => {

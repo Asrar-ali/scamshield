@@ -27,6 +27,7 @@ function makeDiscord(): DiscordChannel {
     getClient: () => ({} as never),
     getBotTag: () => 'ScamShield#0001',
     getGuildName: () => 'Test Guild',
+    getGuilds: () => [{ id: '1', name: 'Test Guild' }],
     getRecentUsers: () => [],
     getMonitoredUsers: () => [],
     stop: () => undefined,

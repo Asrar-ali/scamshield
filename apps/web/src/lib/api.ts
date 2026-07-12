@@ -123,6 +123,9 @@ export interface RecentUser {
 export interface MonitoredUser {
   userId: string;
   name: string;
+  avatarUrl?: string;
+  guildId: string;
+  guildName: string;
   risk: number;
   maxRisk: number;
   turns: number;
@@ -134,6 +137,7 @@ export interface DiscordStatus {
   enabled: boolean;
   botTag: string | null;
   guildName: string | null;
+  guilds: Array<{ id: string; name: string }>;
   monitoredUsers: MonitoredUser[];
   recentUsers: RecentUser[];
 }
@@ -175,7 +179,7 @@ export async function updateSettings(settings: Settings): Promise<Settings | nul
   }
 }
 
-const DISCORD_DISCONNECTED: DiscordStatus = { enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] };
+const DISCORD_DISCONNECTED: DiscordStatus = { enabled: false, botTag: null, guildName: null, guilds: [], monitoredUsers: [], recentUsers: [] };
 
 /** Never throws — a 404 or network failure reads the same as "not connected". */
 export async function fetchDiscordStatus(): Promise<DiscordStatus> {

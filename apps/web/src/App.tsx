@@ -61,7 +61,7 @@ interface PendingAlert {
 }
 
 const TOAST_LIFETIME_MS = 7000;
-const DISCONNECTED_DISCORD: DiscordStatus = { enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] };
+const DISCONNECTED_DISCORD: DiscordStatus = { enabled: false, botTag: null, guildName: null, guilds: [], monitoredUsers: [], recentUsers: [] };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('dashboard');
@@ -82,6 +82,7 @@ export default function App() {
   const [eventLog, setEventLog] = useState<EventLogItem[]>([]);
 
   const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
+  const [selectedGuildId, setSelectedGuildId] = useState<string | null>(null);
 
   const focusSessionRef = useRef<string | null>(null);
   const deliveryToastIdRef = useRef(0);
@@ -568,9 +569,40 @@ export default function App() {
                   <h1 className="page-title">active sessions</h1>
                   <p className="page-sub">
                     {discordStatus.guildName
-                      ? `Monitoring ${discordStatus.guildName} · ${discordStatus.monitoredUsers.length} user${discordStatus.monitoredUsers.length !== 1 ? 's' : ''} tracked`
+                      ? `${discordStatus.monitoredUsers.length} user${discordStatus.monitoredUsers.length !== 1 ? 's' : ''} tracked`
                       : 'Connect a Discord server to start monitoring.'}
                   </p>
+
+                  {/* Server filter tabs */}
+                  {discordStatus.guilds.length > 1 && (
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGuildId(null)}
+                        style={{
+                          padding: '4px 12px', borderRadius: 4, fontSize: 11, fontFamily: 'var(--font-mono)',
+                          cursor: 'pointer', border: '1px solid',
+                          borderColor: selectedGuildId === null ? 'var(--accent)' : 'var(--border)',
+                          background: selectedGuildId === null ? 'rgba(52,211,153,0.1)' : 'var(--surface)',
+                          color: selectedGuildId === null ? 'var(--accent)' : 'var(--muted)',
+                        }}
+                      >all servers</button>
+                      {discordStatus.guilds.map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setSelectedGuildId(g.id)}
+                          style={{
+                            padding: '4px 12px', borderRadius: 4, fontSize: 11, fontFamily: 'var(--font-mono)',
+                            cursor: 'pointer', border: '1px solid',
+                            borderColor: selectedGuildId === g.id ? 'var(--accent)' : 'var(--border)',
+                            background: selectedGuildId === g.id ? 'rgba(52,211,153,0.1)' : 'var(--surface)',
+                            color: selectedGuildId === g.id ? 'var(--accent)' : 'var(--muted)',
+                          }}
+                        >{g.name}</button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* User cards sorted by maxRisk desc */}
                   {discordStatus.monitoredUsers.length === 0 ? (
@@ -581,12 +613,13 @@ export default function App() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
                       {[...discordStatus.monitoredUsers]
+                        .filter((u) => selectedGuildId === null || u.guildId === selectedGuildId)
                         .sort((a, b) => b.maxRisk - a.maxRisk)
                         .map((u) => {
                           const isLive = focusUser === u.name || (focusSessionId && !u.blocked && discordStatus.monitoredUsers.length === 1);
                           const riskColor = u.maxRisk >= 65 ? 'var(--crit)' : u.maxRisk >= 35 ? 'var(--warn)' : 'var(--accent)';
                           return (
-                            <div key={u.userId}>
+                            <div key={`${u.guildId}:${u.userId}`}>
                               <div
                                 style={{
                                   border: `1px solid ${u.blocked ? 'rgba(239,68,68,0.4)' : isLive ? 'rgba(52,211,153,0.4)' : 'var(--border)'}`,
@@ -598,6 +631,12 @@ export default function App() {
                                 onClick={() => isLive && setSelectedAlertId(selectedAlertId === -1 ? null : -1)}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                                  {u.avatarUrl ? (
+                                    <img src={u.avatarUrl} alt="" style={{
+                                      width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                                      objectFit: 'cover', border: `2px solid ${riskColor}`,
+                                    }} />
+                                  ) : (
                                   <div style={{
                                     width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
                                     background: u.blocked ? 'rgba(239,68,68,0.2)' : 'linear-gradient(135deg,#34d399,#10b981)',
@@ -607,6 +646,7 @@ export default function App() {
                                   }}>
                                     {u.name[0]?.toUpperCase() ?? '?'}
                                   </div>
+                                  )}
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{u.name}</span>
