@@ -253,7 +253,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     }
   }
 
-  function createSession(alias: string, userId?: string): Session {
+  function createSession(alias: string, userId?: string, avatarUrl?: string): Session {
     const session: Session = {
       id: randomUUID(),
       alias,
@@ -273,7 +273,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     } catch (err) {
       log.warn('store.saveSessionStart threw:', err instanceof Error ? err.message : err);
     }
-    broadcast({ type: 'session', state: 'start', id: session.id, ts: Date.now(), alias, userId }, session.id);
+    broadcast({ type: 'session', state: 'start', id: session.id, ts: Date.now(), alias, userId, avatar: avatarUrl }, session.id);
     broadcast({ type: 'risk', score: 0, ts: Date.now(), userId }, session.id);
     return session;
   }
@@ -515,7 +515,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     const existingId = watchedUsers.get(msg.userId);
     let session = existingId ? sessions.get(existingId) : undefined;
     if (!session || session.ended) {
-      session = createSession(sanitizeAlias(msg.username), msg.userId);
+      session = createSession(sanitizeAlias(msg.username), msg.userId, msg.avatarUrl);
       watchedUsers.set(msg.userId, session.id);
     }
 

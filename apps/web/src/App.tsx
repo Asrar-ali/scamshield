@@ -44,6 +44,7 @@ interface EventLogItem {
   // Rich detail fields (only on action events)
   userId?: string;
   alias?: string;
+  avatarUrl?: string;
   action?: string;
   risk?: number;
   tactics?: AlertTactic[];
@@ -55,6 +56,7 @@ interface PendingAlert {
   risk: number;
   userId?: string;
   alias?: string;
+  avatarUrl?: string;
   messageText?: string;
 }
 
@@ -194,7 +196,7 @@ export default function App() {
           setFeed([]);
           setRisk(0);
           setRiskSamples([]);
-          pendingAlertRef.current = { tactics: [], risk: 0, alias: event.alias, userId: event.userId };
+          pendingAlertRef.current = { tactics: [], risk: 0, alias: event.alias, userId: event.userId, avatarUrl: event.avatar };
           setScreen('monitor');
         } else if (event.state === 'end') {
           if (event.id !== focusSessionRef.current) break;
@@ -229,12 +231,13 @@ export default function App() {
           action: e.action,
           userId: e.userId ?? pending.userId,
           alias: pending.alias,
+          avatarUrl: pending.avatarUrl,
           risk: pending.risk,
           tactics: isCritical && pending.tactics.length > 0 ? [...pending.tactics] : undefined,
           messageText: isCritical ? pending.messageText : undefined,
         };
         // After snapshotting, clear tactics/message so subsequent actions (warned/reported) don't re-show them
-        if (isCritical) pendingAlertRef.current = { tactics: [], risk: pending.risk, userId: pending.userId, alias: pending.alias };
+        if (isCritical) pendingAlertRef.current = { tactics: [], risk: pending.risk, userId: pending.userId, alias: pending.alias, avatarUrl: pending.avatarUrl };
         return [item, ...prev].slice(0, 100);
       }
 
@@ -438,14 +441,20 @@ export default function App() {
                             fontSize: 12,
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                              <div style={{
-                                width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-                                background: 'linear-gradient(135deg,#34d399,#10b981)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: 13, fontWeight: 700, color: '#000',
-                              }}>
-                                {(item.alias ?? item.userId ?? '?')[0].toUpperCase()}
-                              </div>
+                              {item.avatarUrl ? (
+                                <img src={item.avatarUrl} alt="" style={{
+                                  width: 32, height: 32, borderRadius: '50%', flexShrink: 0, objectFit: 'cover',
+                                }} />
+                              ) : (
+                                <div style={{
+                                  width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                                  background: 'linear-gradient(135deg,#34d399,#10b981)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 13, fontWeight: 700, color: '#000',
+                                }}>
+                                  {(item.alias ?? item.userId ?? '?')[0].toUpperCase()}
+                                </div>
+                              )}
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>
                                   {item.alias ?? item.userId ?? 'Unknown user'}

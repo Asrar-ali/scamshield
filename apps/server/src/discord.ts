@@ -38,6 +38,7 @@ export interface DiscordTimeoutTarget {
 export interface DiscordMessage {
   userId: string;
   username: string;
+  avatarUrl?: string;
   guildId: string;
   channelId: string;
   text: string;
@@ -88,6 +89,7 @@ function relevantMessage(msg: Message): DiscordMessage | null {
   return {
     userId: msg.author.id,
     username: msg.author.username,
+    avatarUrl: msg.author.displayAvatarURL({ size: 64 }),
     guildId: msg.guildId,
     channelId: msg.channelId,
     text,
