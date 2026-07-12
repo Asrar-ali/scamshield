@@ -15,7 +15,7 @@ import { sanitizeAlias } from './alias.js';
 import { createStore, emptyAnalytics, type SessionRecord, type Store } from './store.js';
 import { createSettingsManager, validateSettings } from './settings.js';
 import { Client } from 'discord.js';
-import { startDiscordChannel, discordEnabled, timeoutMember, type DiscordChannel, type DiscordMessage } from './discord.js';
+import { startDiscordChannel, discordEnabled, timeoutMember, type DiscordChannel, type DiscordMessage, type MonitoredUser } from './discord.js';
 import { dispatchAlerts, summarizeDeliveries } from './alerts.js';
 import { createRateLimiter } from './ratelimit.js';
 import { log } from './log.js';
@@ -342,6 +342,18 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     broadcast({ type: 'risk', score: Math.round(session.risk), ts: Date.now(), userId: msg.userId }, session.id);
 
     session.turn += 1;
+
+    // Keep the Discord channel's monitored-user map in sync so the /status
+    // endpoint (polled every 3s by the monitor screen) reflects live values.
+    const updateMonitored = (discord as DiscordChannel & { _updateMonitored?: (userId: string, patch: Partial<MonitoredUser>) => void })._updateMonitored;
+    if (updateMonitored && msg.userId) {
+      updateMonitored(msg.userId, {
+        risk: Math.round(session.risk),
+        maxRisk: Math.round(session.maxRisk),
+        turns: session.turn,
+        tactics: [...session.tactics],
+      });
+    }
 
     if (!shouldFlag(session.risk, thresholds)) {
       return { flagged: false };
