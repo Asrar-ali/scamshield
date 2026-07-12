@@ -46,7 +46,7 @@ describe('server integration', () => {
       contacts: [],
       model: '',
       sensitivity: 'balanced',
-      thresholds: { flag: 50 },
+      thresholds: { flag: 35 },
     });
   });
 
@@ -62,7 +62,7 @@ describe('server integration', () => {
     expect(put.body).toEqual(payload);
 
     const get = await request(baseUrl).get('/api/settings');
-    expect(get.body).toEqual({ ...payload, thresholds: { flag: 35 } });
+    expect(get.body).toEqual({ ...payload, thresholds: { flag: 20 } });
   });
 
   it('PUT /api/settings 400s on an invalid channel', async () => {
@@ -213,7 +213,7 @@ describe('server integration with Discord monitoring', () => {
     expect(built.discord.getRecentUsers()).toEqual([{ userId: '555', name: 'Sarah', lastSeen: expect.any(Number) }]);
   });
 
-  it('accumulates risk per user across messages and on flag deletes + warns + mutes + reports', async () => {
+  it('accumulates risk per user across messages and on flag warns + mutes + reports', async () => {
     const client = makeStubClient();
     built = buildApp({ limits: NO_TURN_THROTTLE, discordClient: client as never });
     client.emit(Events.ClientReady, client);
@@ -231,13 +231,13 @@ describe('server integration with Discord monitoring', () => {
     expect(allSessions.length).toBe(1);
     expect(allSessions[0].ended).toBe(true); // flag ends the session
 
-    // The message that crossed the threshold got deleted + warned in-channel.
-    const flaggedMsg = msgs.find((m) => m.delete.mock.calls.length > 0);
-    expect(flaggedMsg).toBeTruthy();
-    expect(flaggedMsg?.channel.send).toHaveBeenCalled();
-    const notice = flaggedMsg?.channel.send.mock.calls[0]?.[0] as string | undefined;
+    // Messages are NOT deleted (left visible for demo); a warning notice is posted in-channel.
+    expect(msgs.every((m) => m.delete.mock.calls.length === 0)).toBe(true);
+    const warnedMsg = msgs.find((m) => m.channel.send.mock.calls.length > 0);
+    expect(warnedMsg).toBeTruthy();
+    const notice = warnedMsg?.channel.send.mock.calls[0]?.[0] as string | undefined;
     expect(typeof notice).toBe('string');
-    expect(notice).toContain('ScamShield removed a message from Tom');
+    expect(notice).toContain('ScamShield flagged Tom');
   });
 
   it('blocks further messages from a user after a flag, instead of resetting their risk', async () => {
@@ -258,8 +258,8 @@ describe('server integration with Discord monitoring', () => {
 
     // Still exactly the one (ended) session — no resurrected fresh session.
     expect([...built.sessions.values()].filter((s) => s.alias === 'Scammer').length).toBe(1);
-    // The post-flag message is stonewalled with the block notice.
-    expect(afterMsg.reply).toHaveBeenCalled();
+    // No new session created — blocked user is re-muted but message is left visible for demo purposes.
+    expect(afterMsg.delete).not.toHaveBeenCalled();
   });
 
   it('keeps separate per-user sessions for two different Discord members', async () => {

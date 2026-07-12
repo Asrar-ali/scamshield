@@ -10,7 +10,6 @@ import { SettingsDrawer } from './components/SettingsDrawer';
 import { Leaderboard } from './components/Leaderboard';
 import { Autopsy } from './components/Autopsy';
 import { DiscordPanel } from './components/DiscordPanel';
-import { ThreatIntel } from './components/ThreatIntel';
 import {
   buildAutopsyFromLive,
   buildAutopsyFromEvents,
@@ -28,20 +27,42 @@ import {
   type Settings,
 } from './lib/api';
 
-type Screen = 'overview' | 'monitor' | 'alerts' | 'leaderboard' | 'servers';
+type Screen = 'dashboard' | 'monitor' | 'leaderboard' | 'servers';
+
+interface AlertTactic {
+  tactic: string;
+  confidence: number;
+  evidence: string;
+}
 
 interface EventLogItem {
+  id: number;
   text: string;
   dotColor: string;
   ts: number;
   extra?: string;
+  // Rich detail fields (only on action events)
+  userId?: string;
+  alias?: string;
+  action?: string;
+  risk?: number;
+  tactics?: AlertTactic[];
+  messageText?: string;
+}
+
+interface PendingAlert {
+  tactics: AlertTactic[];
+  risk: number;
+  userId?: string;
+  alias?: string;
+  messageText?: string;
 }
 
 const TOAST_LIFETIME_MS = 7000;
 const DISCONNECTED_DISCORD: DiscordStatus = { enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('overview');
+  const [screen, setScreen] = useState<Screen>('dashboard');
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
   const [focusUser, setFocusUser] = useState<string | null>(null);
   const [risk, setRisk] = useState(0);
@@ -58,8 +79,12 @@ export default function App() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [eventLog, setEventLog] = useState<EventLogItem[]>([]);
 
+  const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
+
   const focusSessionRef = useRef<string | null>(null);
   const deliveryToastIdRef = useRef(0);
+  const eventLogIdRef = useRef(0);
+  const pendingAlertRef = useRef<PendingAlert>({ tactics: [], risk: 0 });
 
   useEffect(() => {
     focusSessionRef.current = focusSessionId;
@@ -83,11 +108,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!settingsOpen) return;
     let cancelled = false;
     void (async () => {
-      const d = await fetchDiscordStatus();
-      if (!cancelled) setDiscordStatus(d);
+      const [d, s] = await Promise.all([fetchDiscordStatus(), fetchSettings()]);
+      if (!cancelled) { setDiscordStatus(d); setSettings(s); }
     })();
     return () => { cancelled = true; };
   }, [settingsOpen]);
@@ -117,13 +141,20 @@ export default function App() {
 
     switch (event.type) {
       case 'utterance':
+        if (event.role === 'scammer') {
+          pendingAlertRef.current.messageText = event.text;
+          if (event.userId) pendingAlertRef.current.userId = event.userId;
+        }
         break;
       case 'tactic':
         setHits((prev) => [{ tactic: event.tactic, confidence: event.confidence, evidence: event.evidence, ts: event.ts }, ...prev]);
+        pendingAlertRef.current.tactics.push({ tactic: event.tactic, confidence: event.confidence, evidence: event.evidence });
         break;
       case 'risk':
         setRisk(event.score);
         setRiskSamples((prev) => [...prev, { score: event.score, ts: event.ts }]);
+        pendingAlertRef.current.risk = event.score;
+        if (event.userId && !pendingAlertRef.current.userId) pendingAlertRef.current.userId = event.userId;
         break;
       case 'intervention':
         setFeed((prev) => [{ kind: 'intervention', level: event.level, text: event.text, ts: event.ts }, ...prev]);
@@ -151,6 +182,7 @@ export default function App() {
           setFeed([]);
           setRisk(0);
           setRiskSamples([]);
+          pendingAlertRef.current = { tactics: [], risk: 0, alias: event.alias, userId: event.userId };
           setScreen('monitor');
         } else if (event.state === 'end') {
           if (event.id !== focusSessionRef.current) break;
@@ -165,31 +197,63 @@ export default function App() {
 
     // Accumulate for the alerts screen
     setEventLog(prev => {
-      let text = '';
-      let dotColor = 'var(--muted-2)';
-      let extra = '';
+      const ts = (event as { ts?: number }).ts ?? Date.now();
+      const id = (eventLogIdRef.current += 1);
+
       if (event.type === 'action') {
         const e = event as { type: 'action'; action: string; userId?: string };
-        text = `${e.action} — ${e.userId ?? 'user'}`;
-        dotColor = e.action === 'deleted' || e.action === 'muted' ? 'var(--crit)' : 'var(--accent)';
-      } else if (event.type === 'intervention') {
-        const e = event as { type: 'intervention'; level: string; text: string };
-        text = e.text.slice(0, 80);
-        dotColor = e.level === 'flag' ? 'var(--crit)' : 'var(--warn)';
-      } else if (event.type === 'delivery') {
-        const e = event as { type: 'delivery'; contact: string; channel: string; ok: boolean };
-        text = `alert → ${e.contact} (${e.channel})`;
-        dotColor = e.ok ? 'var(--accent)' : 'var(--crit)';
-        extra = e.ok ? 'delivered' : 'failed';
-      } else if (event.type === 'tactic') {
-        const e = event as { type: 'tactic'; tactic: string; confidence: number };
-        text = `detected: ${e.tactic.replace(/_/g, ' ')} (${Math.round(e.confidence * 100)}%)`;
-        dotColor = 'var(--warn)';
-      } else {
-        return prev;
+        const isCritical = e.action === 'deleted' || e.action === 'muted';
+        const dotColor = isCritical ? 'var(--crit)' : 'var(--accent)';
+        const text = `${e.action} — ${e.userId ?? 'user'}`;
+
+        // Snapshot pending data when the first critical action fires (deleted/muted)
+        const pending = pendingAlertRef.current;
+        const resolvedAlias = pending.alias ?? pending.userId;
+        const item: EventLogItem = {
+          id,
+          text: isCritical ? `${e.action} — ${resolvedAlias ?? e.userId ?? 'user'}` : text,
+          dotColor,
+          ts,
+          action: e.action,
+          userId: e.userId ?? pending.userId,
+          alias: pending.alias,
+          risk: pending.risk,
+          tactics: isCritical && pending.tactics.length > 0 ? [...pending.tactics] : undefined,
+          messageText: isCritical ? pending.messageText : undefined,
+        };
+        // After snapshotting, clear tactics/message so subsequent actions (warned/reported) don't re-show them
+        if (isCritical) pendingAlertRef.current = { tactics: [], risk: pending.risk, userId: pending.userId, alias: pending.alias };
+        return [item, ...prev].slice(0, 100);
       }
-      if (!text) return prev;
-      return [{ text, dotColor, ts: (event as { ts?: number }).ts ?? Date.now(), extra }, ...prev].slice(0, 100);
+
+      if (event.type === 'intervention') {
+        const e = event as { type: 'intervention'; level: string; text: string };
+        return [{ id, text: e.text.slice(0, 100), dotColor: e.level === 'flag' ? 'var(--crit)' : 'var(--warn)', ts }, ...prev].slice(0, 100);
+      }
+
+      if (event.type === 'delivery') {
+        const e = event as { type: 'delivery'; contact: string; channel: string; ok: boolean };
+        return [{
+          id,
+          text: `alert → ${e.contact} (${e.channel})`,
+          dotColor: e.ok ? 'var(--accent)' : 'var(--crit)',
+          ts,
+          extra: e.ok ? 'delivered' : 'failed',
+        }, ...prev].slice(0, 100);
+      }
+
+      if (event.type === 'tactic') {
+        const e = event as { type: 'tactic'; tactic: string; confidence: number; evidence: string };
+        return [{
+          id,
+          text: `detected: ${e.tactic.replace(/_/g, ' ')} (${Math.round(e.confidence * 100)}%)`,
+          dotColor: 'var(--warn)',
+          ts,
+          messageText: e.evidence,
+        }, ...prev].slice(0, 100);
+      }
+
+      return prev;
     });
   }, []);
 
@@ -247,12 +311,13 @@ export default function App() {
         </div>
 
         <nav className="sidebar-nav">
-          <button type="button" className={`sidebar-nav-item${screen === 'overview' ? ' is-active' : ''}`} onClick={() => setScreen('overview')}>
+          <button type="button" className={`sidebar-nav-item${screen === 'dashboard' ? ' is-active' : ''}`} onClick={() => setScreen('dashboard')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
               <rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/>
               <rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
             </svg>
-            overview
+            <span style={{ flex: 1 }}>dashboard</span>
+            {eventLog.length > 0 && <span className="sidebar-nav-badge">{Math.min(eventLog.length, 99)}</span>}
           </button>
 
           <button type="button" className={`sidebar-nav-item${screen === 'monitor' ? ' is-active' : ''}`} onClick={() => setScreen('monitor')}>
@@ -262,15 +327,6 @@ export default function App() {
             </svg>
             <span style={{ flex: 1 }}>monitor</span>
             {focusSessionId && <span className="sidebar-nav-badge" style={{ color: 'var(--accent)' }}>●</span>}
-          </button>
-
-          <button type="button" className={`sidebar-nav-item${screen === 'alerts' ? ' is-active' : ''}`} onClick={() => setScreen('alerts')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10.268 21a2 2 0 0 0 3.464 0"/>
-              <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>
-            </svg>
-            <span style={{ flex: 1 }}>alerts</span>
-            {eventLog.length > 0 && <span className="sidebar-nav-badge">{Math.min(eventLog.length, 99)}</span>}
           </button>
 
           <button type="button" className={`sidebar-nav-item${screen === 'leaderboard' ? ' is-active' : ''}`} onClick={() => setScreen('leaderboard')}>
@@ -316,11 +372,11 @@ export default function App() {
       <div className="main-content">
         <div className="main-inner">
 
-          {/* OVERVIEW */}
-          {screen === 'overview' && (
+          {/* DASHBOARD */}
+          {screen === 'dashboard' && (
             <div>
-              <div className="page-eyebrow">overview</div>
-              <h1 className="page-title">dashboard</h1>
+              <div className="page-eyebrow">dashboard</div>
+              <h1 className="page-title">overview</h1>
               <p className="page-sub">Real-time scam detection across your monitored Discord servers.</p>
 
               <div className="stats-grid">
@@ -344,18 +400,135 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="section-label">recent activity</div>
+              <div className="section-label" style={{ marginTop: 32 }}>event feed</div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Click an action card to see user, message, and detected tactics.</p>
               {eventLog.length === 0 ? (
-                <p className="empty" style={{ paddingTop: 12 }}>No activity yet — waiting for the bot to observe messages.</p>
+                <p className="empty" style={{ paddingTop: 8 }}>No events yet — waiting for the bot to detect activity.</p>
               ) : (
-                eventLog.slice(0, 8).map((item, i) => (
-                  <div key={i} className="feed-row">
-                    <span className="feed-dot" style={{ background: item.dotColor }} />
-                    <span style={{ flex: 1, fontSize: 13, color: 'var(--fg-2, #d4d4d4)' }}>{item.text}</span>
-                    {item.extra && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-2)' }}>{item.extra}</span>}
-                    <span className="feed-time">{new Date(item.ts).toLocaleTimeString()}</span>
-                  </div>
-                ))
+                <div style={{ borderTop: '1px solid var(--border)' }}>
+                  {eventLog.map((item) => {
+                    const isExpandable = !!(item.tactics?.length || item.messageText);
+                    const isOpen = selectedAlertId === item.id;
+                    return (
+                      <div key={item.id}>
+                        <div
+                          className="feed-row"
+                          style={{ cursor: isExpandable ? 'pointer' : 'default' }}
+                          onClick={() => isExpandable && setSelectedAlertId(isOpen ? null : item.id)}
+                        >
+                          <span className="feed-dot" style={{ background: item.dotColor }} />
+                          <span style={{ flex: 1, fontSize: 13, color: 'var(--fg-2, #d4d4d4)' }}>{item.text}</span>
+                          {item.extra && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-2)', marginRight: 8 }}>{item.extra}</span>}
+                          {isExpandable && (
+                            <span style={{ fontSize: 11, color: 'var(--muted)', marginRight: 8 }}>{isOpen ? '▲' : '▼'}</span>
+                          )}
+                          <span className="feed-time">{new Date(item.ts).toLocaleTimeString()}</span>
+                        </div>
+
+                        {isOpen && (
+                          <div style={{
+                            margin: '0 0 4px 24px',
+                            padding: '12px 16px',
+                            background: 'var(--surface)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 6,
+                            fontSize: 12,
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                              <div style={{
+                                width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                                background: 'linear-gradient(135deg,#34d399,#10b981)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 13, fontWeight: 700, color: '#000',
+                              }}>
+                                {(item.alias ?? item.userId ?? '?')[0].toUpperCase()}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>
+                                  {item.alias ?? item.userId ?? 'Unknown user'}
+                                </div>
+                                {item.userId && item.alias && (
+                                  <div style={{ color: 'var(--muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>id: {item.userId}</div>
+                                )}
+                              </div>
+                              {item.risk !== undefined && (
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ color: 'var(--muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>risk</div>
+                                  <div style={{
+                                    fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 20,
+                                    color: item.risk >= 65 ? 'var(--crit)' : item.risk >= 35 ? 'var(--warn)' : 'var(--accent)',
+                                  }}>{Math.round(item.risk)}</div>
+                                </div>
+                              )}
+                            </div>
+
+                            {item.messageText && (
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.08em' }}>message</div>
+                                <div style={{
+                                  padding: '8px 10px',
+                                  background: 'var(--bg)',
+                                  border: '1px solid var(--border)',
+                                  borderLeft: '3px solid var(--crit)',
+                                  borderRadius: 4,
+                                  fontFamily: 'var(--font-mono)',
+                                  color: 'var(--fg-2)',
+                                  lineHeight: 1.5,
+                                  fontSize: 12,
+                                }}>
+                                  {item.messageText}
+                                </div>
+                              </div>
+                            )}
+
+                            {item.tactics && item.tactics.length > 0 && (
+                              <div>
+                                <div style={{ color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.08em' }}>detected tactics</div>
+                                {item.tactics.map((t, ti) => (
+                                  <div key={ti} style={{ marginBottom: ti < item.tactics!.length - 1 ? 8 : 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                      <span style={{
+                                        padding: '2px 7px',
+                                        background: 'rgba(239,68,68,0.12)',
+                                        border: '1px solid rgba(239,68,68,0.3)',
+                                        borderRadius: 3,
+                                        fontFamily: 'var(--font-mono)',
+                                        fontSize: 11,
+                                        color: 'var(--crit)',
+                                        letterSpacing: '0.02em',
+                                      }}>
+                                        {t.tactic.replace(/_/g, ' ')}
+                                      </span>
+                                      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--warn)', fontSize: 11 }}>
+                                        {Math.round(t.confidence * 100)}%
+                                      </span>
+                                    </div>
+                                    {t.evidence && (
+                                      <div style={{
+                                        padding: '6px 10px',
+                                        background: 'var(--bg)',
+                                        border: '1px solid var(--border)',
+                                        borderLeft: '3px solid var(--warn)',
+                                        borderRadius: 4,
+                                        fontFamily: 'var(--font-mono)',
+                                        color: 'var(--muted)',
+                                        fontSize: 11,
+                                        fontStyle: 'italic',
+                                        lineHeight: 1.5,
+                                      }}>
+                                        "{t.evidence}"
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}
@@ -375,60 +548,113 @@ export default function App() {
                   <div className="page-eyebrow">detection history</div>
                   <Autopsy data={replay} />
                 </div>
-              ) : !focusSessionId ? (
+              ) : (
                 <div>
-                  <h1 className="page-title">live monitor</h1>
+                  <h1 className="page-title">active sessions</h1>
                   <p className="page-sub">
                     {discordStatus.guildName
-                      ? `Monitoring ${discordStatus.guildName}. Waiting for messages.`
+                      ? `Monitoring ${discordStatus.guildName} · ${discordStatus.monitoredUsers.length} user${discordStatus.monitoredUsers.length !== 1 ? 's' : ''} tracked`
                       : 'Connect a Discord server to start monitoring.'}
                   </p>
-                  <DiscordPanel status={discordStatus} />
-                </div>
-              ) : (
-                <div>
-                  <div className="monitor-focus-head">
-                    <h2>{focusUser}</h2>
-                    {discordStatus.guildName && (
-                      <span className="channel-chip channel-chip--telegram">in {discordStatus.guildName}</span>
-                    )}
-                  </div>
-                  <div className="left-stack" style={{ marginTop: 24 }}>
-                    <RiskGauge
-                      risk={risk}
-                      samples={riskSamples}
-                      markers={hits.map((h) => ({ tactic: h.tactic, ts: h.ts }))}
-                      interventions={[]}
-                      startTs={riskSamples[0]?.ts ?? null}
-                      endTs={null}
-                    />
-                    <TacticsPanel hits={hits} />
-                    <InterventionsPanel items={feed} />
-                    {liveAutopsy && <Autopsy data={liveAutopsy} />}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
-          {/* ALERTS */}
-          {screen === 'alerts' && (
-            <div>
-              <div className="page-eyebrow">alerts</div>
-              <h1 className="page-title">event feed</h1>
-              <p className="page-sub">Chronological log of everything the classifier surfaced.</p>
-              {eventLog.length === 0 ? (
-                <p className="empty" style={{ paddingTop: 12 }}>No events yet.</p>
-              ) : (
-                <div style={{ borderTop: '1px solid var(--border)' }}>
-                  {eventLog.map((item, i) => (
-                    <div key={i} className="feed-row">
-                      <span className="feed-dot" style={{ background: item.dotColor }} />
-                      <span style={{ flex: 1, fontSize: 13, color: 'var(--fg-2, #d4d4d4)' }}>{item.text}</span>
-                      {item.extra && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-2)', marginRight: 8 }}>{item.extra}</span>}
-                      <span className="feed-time">{new Date(item.ts).toLocaleTimeString()}</span>
+                  {/* User cards sorted by maxRisk desc */}
+                  {discordStatus.monitoredUsers.length === 0 ? (
+                    <div>
+                      <p className="empty" style={{ paddingTop: 8 }}>No users tracked yet — the bot will appear here once it observes messages.</p>
+                      <DiscordPanel status={discordStatus} />
                     </div>
-                  ))}
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+                      {[...discordStatus.monitoredUsers]
+                        .sort((a, b) => b.maxRisk - a.maxRisk)
+                        .map((u) => {
+                          const isLive = focusUser === u.name || (focusSessionId && !u.blocked && discordStatus.monitoredUsers.length === 1);
+                          const riskColor = u.maxRisk >= 65 ? 'var(--crit)' : u.maxRisk >= 35 ? 'var(--warn)' : 'var(--accent)';
+                          return (
+                            <div key={u.userId}>
+                              <div
+                                style={{
+                                  border: `1px solid ${u.blocked ? 'rgba(239,68,68,0.4)' : isLive ? 'rgba(52,211,153,0.4)' : 'var(--border)'}`,
+                                  borderRadius: 8,
+                                  padding: '16px 20px',
+                                  background: 'var(--surface)',
+                                  cursor: isLive ? 'pointer' : 'default',
+                                }}
+                                onClick={() => isLive && setSelectedAlertId(selectedAlertId === -1 ? null : -1)}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                                  <div style={{
+                                    width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                                    background: u.blocked ? 'rgba(239,68,68,0.2)' : 'linear-gradient(135deg,#34d399,#10b981)',
+                                    border: `2px solid ${riskColor}`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: 14, fontWeight: 700, color: u.blocked ? 'var(--crit)' : '#000',
+                                  }}>
+                                    {u.name[0]?.toUpperCase() ?? '?'}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{u.name}</span>
+                                      {isLive && <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 3, padding: '1px 5px' }}>LIVE</span>}
+                                      {u.blocked && <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--crit)', border: '1px solid var(--crit)', borderRadius: 3, padding: '1px 5px' }}>BLOCKED</span>}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{u.turns} message{u.turns !== 1 ? 's' : ''} observed</div>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 700, color: riskColor, lineHeight: 1 }}>{Math.round(u.maxRisk)}</div>
+                                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>peak risk</div>
+                                  </div>
+                                </div>
+
+                                {/* Risk bar */}
+                                <div style={{ height: 4, background: 'var(--bg)', borderRadius: 2, marginBottom: 10, overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${u.maxRisk}%`, background: riskColor, borderRadius: 2, transition: 'width 0.4s' }} />
+                                </div>
+
+                                {/* Tactic tags */}
+                                {u.tactics.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {u.tactics.slice(0, 4).map((t) => (
+                                      <span key={t} style={{
+                                        padding: '2px 7px',
+                                        background: 'rgba(239,68,68,0.1)',
+                                        border: '1px solid rgba(239,68,68,0.25)',
+                                        borderRadius: 3,
+                                        fontFamily: 'var(--font-mono)',
+                                        fontSize: 10,
+                                        color: 'var(--crit)',
+                                      }}>
+                                        {t.replace(/_/g, ' ')}
+                                      </span>
+                                    ))}
+                                    {u.tactics.length > 4 && (
+                                      <span style={{ fontSize: 10, color: 'var(--muted)', padding: '2px 4px' }}>+{u.tactics.length - 4} more</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Expanded live gauge for the active session user */}
+                              {isLive && selectedAlertId === -1 && (
+                                <div className="left-stack" style={{ marginTop: 12 }}>
+                                  <RiskGauge
+                                    risk={risk}
+                                    samples={riskSamples}
+                                    markers={hits.map((h) => ({ tactic: h.tactic, ts: h.ts }))}
+                                    interventions={[]}
+                                    startTs={riskSamples[0]?.ts ?? null}
+                                    endTs={null}
+                                  />
+                                  <TacticsPanel hits={hits} />
+                                  <InterventionsPanel items={feed} />
+                                  {liveAutopsy && <Autopsy data={liveAutopsy} />}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -441,9 +667,6 @@ export default function App() {
               <h1 className="page-title">flagged sessions</h1>
               <p className="page-sub">Every session caught by the classifier, ranked by turns survived.</p>
               <Leaderboard refreshSignal={leaderboardRefresh} onReplay={(id, alias) => { void openReplay(id, alias); setScreen('monitor'); }} />
-              <div className="section-divider" style={{ marginTop: 40 }} />
-              <div className="section-label">threat intel</div>
-              <ThreatIntel refreshSignal={leaderboardRefresh} />
             </div>
           )}
 

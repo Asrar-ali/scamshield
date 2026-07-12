@@ -10,7 +10,7 @@ import { TACTIC_BY_ID } from './tactics.js';
 import { ANALYST_SYSTEM, fenceCallerText } from './prompts.js';
 import { gemini, geminiEnabled, aiStatus, listModels } from './gemini.js';
 import { mockAnalyze } from './mock.js';
-import { applyDetections, shouldFlag, thresholdsFor } from './risk.js';
+import { applyDetections, shouldFlag, shouldInstantFlag, thresholdsFor } from './risk.js';
 import { sanitizeAlias } from './alias.js';
 import { createStore, emptyAnalytics, type SessionRecord, type Store } from './store.js';
 import { createSettingsManager, validateSettings } from './settings.js';
@@ -69,9 +69,10 @@ export const DEFAULT_LIMITS: Limits = {
 // Deterministic warning notice posted in-channel when a message is flagged. No
 // Gemini call — fixed template so the notice is instant, free, and never breaks
 // character (there is no character).
-function buildWarningNotice(username: string, tacticLabels: string[]): string {
+function buildWarningNotice(username: string, tacticLabels: string[], knownBadActor = false): string {
   const tactics = tacticLabels.length > 0 ? tacticLabels.join(', ') : 'suspicious activity';
-  return `⚠️ ScamShield removed a message from ${username}. Detected: ${tactics}.`;
+  const knownPart = knownBadActor ? ' ⚠️ This user has been flagged before.' : '';
+  return `⚠️ ScamShield flagged ${username}. Detected: ${tactics}.${knownPart}`;
 }
 
 
@@ -327,14 +328,21 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
       broadcast({ type: 'tactic', tactic: d.tactic, confidence: d.confidence, evidence: d.evidence, ts: Date.now(), userId: msg.userId }, session.id);
     }
 
+    const thresholds = thresholdsFor(settingsManager.get().sensitivity);
     const update = applyDetections(session.risk, detections);
     session.risk = update.risk;
+
+    // Instant-flag: a single high-confidence detection skips accumulation and immediately
+    // crosses the threshold. Catches obvious single-message scams on the first hit.
+    if (detections.length > 0 && shouldInstantFlag(detections)) {
+      session.risk = Math.max(session.risk, thresholds.flag);
+    }
+
     session.maxRisk = Math.max(session.maxRisk, session.risk);
     broadcast({ type: 'risk', score: Math.round(session.risk), ts: Date.now(), userId: msg.userId }, session.id);
 
     session.turn += 1;
 
-    const thresholds = thresholdsFor(settingsManager.get().sensitivity);
     if (!shouldFlag(session.risk, thresholds)) {
       return { flagged: false };
     }
@@ -345,15 +353,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     const notice = buildWarningNotice(msg.username, tacticLabels);
     broadcast({ type: 'intervention', level: 'flag', text: notice, ts: Date.now(), userId: msg.userId }, session.id);
 
-    // 1. Delete the flagged message (best-effort — never blocks the rest).
-    if (msg.raw && typeof msg.raw.delete === 'function') {
-      await msg.raw.delete().catch((err: unknown) =>
-        log.warn('discord message delete failed:', err instanceof Error ? err.message : err),
-      );
-      broadcast({ type: 'action', action: 'deleted', userId: msg.userId, ts: Date.now() }, session.id);
-    }
-
-    // 2. Post the warning notice in-channel (best-effort).
+    // Post the warning notice in-channel (best-effort).
     if (msg.raw) {
       const ch = msg.raw.channel;
       if ('send' in ch && typeof ch.send === 'function') {
@@ -486,7 +486,13 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     // Already-flagged user: stay muted, no new analysis, no Gemini spend.
     if (blockedUsers.has(msg.userId)) {
       if (msg.raw) {
-        await msg.raw.delete().catch(() => undefined);
+        const ch = msg.raw.channel;
+        if ('send' in ch && typeof ch.send === 'function') {
+          const notice = buildWarningNotice(msg.username, [], true);
+          await ch.send(notice).catch((err: unknown) =>
+            log.warn('discord blocked-user notice failed:', err instanceof Error ? err.message : err),
+          );
+        }
       }
       await timeoutMember(discord, { userId: msg.userId, guildId: msg.guildId, minutes: FLAG_TIMEOUT_MINUTES });
       return { flagged: false };

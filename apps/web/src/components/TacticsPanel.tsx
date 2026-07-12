@@ -42,7 +42,7 @@ export function TacticsPanel({ hits }: TacticsPanelProps) {
         {activeTactics.length === 0 && (
           <p className="empty tactics-empty">
             <span className="empty-icon" aria-hidden="true">◇</span>
-            No tactics yet. Rose is safe… for now.
+            No tactics detected yet.
           </p>
         )}
         {activeTactics.map((t, i) => {

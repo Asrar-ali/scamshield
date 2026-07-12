@@ -1,11 +1,15 @@
 import type { Detection, Sensitivity } from './types.js';
 import { TACTIC_BY_ID } from './tactics.js';
 
-export const FLAG_THRESHOLD = 50;
+export const FLAG_THRESHOLD = 35;
 export const RISK_DECAY_PER_CLEAN_TURN = 4;
 export const MAX_RISK_GAIN_PER_TURN = 22;
 export const MIN_RISK = 0;
 export const MAX_RISK = 100;
+
+// A single detection at or above this confidence immediately crosses the flag threshold
+// regardless of accumulated risk — catches obvious single-message scams on the first hit.
+export const INSTANT_FLAG_CONFIDENCE = 0.80;
 
 export interface RiskThresholds {
   flag: number;
@@ -15,7 +19,7 @@ export interface RiskThresholds {
 export const SENSITIVITY_THRESHOLDS: Record<Sensitivity, RiskThresholds> = {
   relaxed: { flag: 65 },
   balanced: { flag: FLAG_THRESHOLD },
-  paranoid: { flag: 35 },
+  paranoid: { flag: 20 },
 };
 
 export function thresholdsFor(sensitivity: Sensitivity): RiskThresholds {
@@ -56,4 +60,10 @@ export function shouldFlag(
   thresholds: RiskThresholds = SENSITIVITY_THRESHOLDS.balanced,
 ): boolean {
   return risk >= thresholds.flag;
+}
+
+/** Returns true if any detection is high enough confidence to flag immediately,
+ * bypassing the accumulated-risk requirement. Catches single blatant scam messages. */
+export function shouldInstantFlag(detections: Detection[]): boolean {
+  return detections.some((d) => d.confidence >= INSTANT_FLAG_CONFIDENCE);
 }
