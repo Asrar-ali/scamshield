@@ -1,18 +1,8 @@
 // Thin fetch wrappers around the server's REST contract.
-// Every call is defensive: the server may be mid-implementation (parallel agent),
-// so failures degrade gracefully instead of throwing into UI code.
+// Every call is defensive: the server may be mid-implementation, so failures
+// degrade gracefully instead of throwing into UI code.
 
 import type { DeliveryChannel, Event, TacticId } from '../types';
-
-export interface StartSessionResponse {
-  sessionId: string;
-}
-
-export interface TurnResponse {
-  ended: boolean;
-  risk: number;
-  reply?: string;
-}
 
 export type LeaderboardOutcome = 'caught' | 'gave_up';
 
@@ -25,96 +15,10 @@ export interface LeaderboardEntry {
   ts: number;
 }
 
-export type TtsRole = 'grandma' | 'guardian';
-
-// Transparent retry budget for a rate-limited turn (HTTP 429). The server hints
-// a `retryAfterMs`; we wait that long (+ a small buffer, capped) and try again a
-// bounded number of times so a burst of turns queues instead of being silently
-// dropped. Beyond the budget the error propagates to the caller.
-const TURN_RETRY_MAX = 4;
-const TURN_RETRY_FALLBACK_MS = 1200;
-const TURN_RETRY_BUFFER_MS = 200;
-const TURN_RETRY_CAP_MS = 4000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${url} → ${res.status}`);
-  return (await res.json()) as T;
-}
-
-export async function startSession(alias: string): Promise<StartSessionResponse> {
-  return postJson<StartSessionResponse>('/api/session/start', { alias });
-}
-
-/** How long to wait after a 429, from the server's `retryAfterMs` hint (with a
- * fallback), plus a small buffer to avoid re-tripping the limit, capped. */
-function retryDelayFrom(body: unknown): number {
-  const hinted = (body as { retryAfterMs?: unknown } | null)?.retryAfterMs;
-  const base = typeof hinted === 'number' && hinted > 0 ? hinted : TURN_RETRY_FALLBACK_MS;
-  return Math.min(TURN_RETRY_CAP_MS, base + TURN_RETRY_BUFFER_MS);
-}
-
-/**
- * Submit one turn. The server rate-limits rapid turns with 429 + {retryAfterMs};
- * we honor that hint and retry transparently within a bounded budget so a fast
- * sequence of messages is paced rather than lost. Any other non-OK status (or
- * exhausting the retry budget) throws, and the caller keeps the call live.
- */
-export async function sendTurn(sessionId: string, text: string): Promise<TurnResponse> {
-  for (let attempt = 0; ; attempt += 1) {
-    const res = await fetch('/api/turn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, text }),
-    });
-    if (res.status === 429 && attempt < TURN_RETRY_MAX) {
-      const body = await res.json().catch(() => null);
-      await sleep(retryDelayFrom(body));
-      continue;
-    }
-    if (!res.ok) throw new Error(`/api/turn → ${res.status}`);
-    return (await res.json()) as TurnResponse;
-  }
-}
-
-/** "Give up" — manual end. Best-effort: caller should not block UX on failure. */
-export async function endSession(sessionId: string): Promise<void> {
-  await fetch(`/api/session/${encodeURIComponent(sessionId)}/end`, { method: 'POST' });
-}
-
-/**
- * Fetch TTS audio for a line. Returns the audio Blob on success, or null when the
- * server signals fallback (503 / {fallback:true}) or the request fails outright —
- * callers should use speechSynthesis in the null case.
- */
-export async function fetchTts(text: string, role: TtsRole): Promise<Blob | null> {
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, role }),
-    });
-    if (!res.ok) return null;
-    const contentType = res.headers.get('content-type') ?? '';
-    if (!contentType.includes('audio')) return null;
-    return await res.blob();
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Analytics + session replay — feed the Threat Intel panel and the Autopsy
-// replay. Both degrade to a benign empty shape on any failure so the caller
-// can hide the panel rather than render a broken box.
+// Analytics + session replay — feed the Threat Intel panel and the per-user
+// detection history. Both degrade to a benign empty shape on any failure so the
+// caller can hide the panel rather than render a broken box.
 // ---------------------------------------------------------------------------
 
 export interface TacticFrequency {
@@ -158,7 +62,7 @@ export async function fetchAnalytics(): Promise<Analytics> {
 }
 
 /** Replay: the ordered event stream for a past session. Returns [] on failure
- * or for unknown/sparse sessions — the Autopsy renders whatever exists. */
+ * or for unknown/sparse sessions. */
 export async function fetchSessionEvents(sessionId: string): Promise<Event[]> {
   try {
     const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/events`);
@@ -183,12 +87,10 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Settings / Telegram / delivery — new surfaces. Every function here returns
-// null (or a benign empty shape) on 404 / network failure so callers can
-// render a "not connected" state instead of breaking.
+// Settings / Discord / delivery — every function here returns null (or a benign
+// empty shape) on 404 / network failure so callers can render a "not connected"
+// state instead of breaking.
 // ---------------------------------------------------------------------------
-
-export type NotifyOn = 'coach' | 'takeover';
 
 export interface Contact {
   id: string;
@@ -199,47 +101,41 @@ export interface Contact {
 
 export type Sensitivity = 'relaxed' | 'balanced' | 'paranoid';
 
-/** The grandparent persona the agent plays on the call — configured per family. */
-export interface Persona {
-  name: string;
-  age: number;
-  city: string;
-  grandkid: string;
-  quirks: string;
-}
-
-export interface VoiceSelection {
-  grandma: string;
-  guardian: string;
-}
-
-/** Risk-score cutoffs for the active sensitivity level. Read-only — server-computed. */
+/** Risk-score cutoff for the active sensitivity level. Read-only — server-computed. */
 export interface Thresholds {
-  coach: number;
-  takeover: number;
+  flag: number;
 }
 
 export interface Settings {
-  protectedName: string;
-  notifyOn: NotifyOn;
+  serverName: string;
   contacts: Contact[];
   model: string;
-  voices: VoiceSelection;
   sensitivity: Sensitivity;
-  persona: Persona;
   thresholds: Thresholds;
 }
 
-export interface TelegramChat {
-  chatId: string;
+export interface RecentUser {
+  userId: string;
   name: string;
   lastSeen: number;
 }
 
-export interface TelegramStatus {
+export interface MonitoredUser {
+  userId: string;
+  name: string;
+  risk: number;
+  maxRisk: number;
+  turns: number;
+  tactics: string[];
+  blocked: boolean;
+}
+
+export interface DiscordStatus {
   enabled: boolean;
-  botUsername: string | null;
-  recentChats: TelegramChat[];
+  botTag: string | null;
+  guildName: string | null;
+  monitoredUsers: MonitoredUser[];
+  recentUsers: RecentUser[];
 }
 
 export interface AlertTestDelivery {
@@ -279,16 +175,16 @@ export async function updateSettings(settings: Settings): Promise<Settings | nul
   }
 }
 
-const TELEGRAM_DISCONNECTED: TelegramStatus = { enabled: false, botUsername: null, recentChats: [] };
+const DISCORD_DISCONNECTED: DiscordStatus = { enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] };
 
 /** Never throws — a 404 or network failure reads the same as "not connected". */
-export async function fetchTelegramStatus(): Promise<TelegramStatus> {
+export async function fetchDiscordStatus(): Promise<DiscordStatus> {
   try {
-    const res = await fetch('/api/telegram/status');
-    if (!res.ok) return TELEGRAM_DISCONNECTED;
-    return (await res.json()) as TelegramStatus;
+    const res = await fetch('/api/discord/status');
+    if (!res.ok) return DISCORD_DISCONNECTED;
+    return (await res.json()) as DiscordStatus;
   } catch {
-    return TELEGRAM_DISCONNECTED;
+    return DISCORD_DISCONNECTED;
   }
 }
 
@@ -304,8 +200,8 @@ export async function postAlertTest(): Promise<AlertTestResponse | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Models / voices — feed the AI tab's pickers. Both return null on 404 /
-// network failure so the picker can render disabled with an "unavailable" note.
+// Models — feed the AI tab's model picker. Returns null on 404 / network failure
+// so the picker can render disabled with an "unavailable" note.
 // ---------------------------------------------------------------------------
 
 export interface ModelInfo {
@@ -319,7 +215,7 @@ export interface ModelsResponse {
   models: ModelInfo[];
 }
 
-/** Returns null when the endpoint 404s (not shipped yet) or the network fails. */
+/** Returns null when the endpoint 404s or the network fails. */
 export async function fetchModels(): Promise<ModelsResponse | null> {
   try {
     const res = await fetch('/api/models');
@@ -327,56 +223,5 @@ export async function fetchModels(): Promise<ModelsResponse | null> {
     return (await res.json()) as ModelsResponse;
   } catch {
     return null;
-  }
-}
-
-export interface VoiceInfo {
-  id: string;
-  name: string;
-}
-
-export interface VoicesResponse {
-  voices: VoiceInfo[];
-}
-
-/** Returns null when the endpoint 404s (not shipped yet) or the network fails. */
-export async function fetchVoices(): Promise<VoicesResponse | null> {
-  try {
-    const res = await fetch('/api/voices');
-    if (!res.ok) return null;
-    return (await res.json()) as VoicesResponse;
-  } catch {
-    return null;
-  }
-}
-
-export interface TtsPreviewResult {
-  ok: boolean;
-  blob?: Blob;
-  /** True when the server answered 503 {fallback:true} — the voice service is keyless/offline. */
-  offline?: boolean;
-}
-
-/**
- * Fetch a one-off TTS preview for a specific voice. Distinct from `fetchTts` (used by the
- * live call) so the settings UI can tell "voice service offline" (503) apart from a generic
- * failure, and so it never falls back to speechSynthesis — a silent preview button is more
- * honest than one that plays a different voice than requested.
- */
-export async function fetchTtsPreview(text: string, role: TtsRole, voiceId: string): Promise<TtsPreviewResult> {
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, role, voiceId }),
-    });
-    if (res.status === 503) return { ok: false, offline: true };
-    if (!res.ok) return { ok: false };
-    const contentType = res.headers.get('content-type') ?? '';
-    if (!contentType.includes('audio')) return { ok: false };
-    const blob = await res.blob();
-    return { ok: true, blob };
-  } catch {
-    return { ok: false };
   }
 }

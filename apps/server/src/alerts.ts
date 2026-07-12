@@ -1,12 +1,14 @@
 import { execFile } from 'node:child_process';
 import type { Contact, ContactChannel } from './types.js';
-import { sendTelegramMessage } from './telegram.js';
+import type { DiscordChannel } from './discord.js';
+import { sendDiscordAlert } from './discord.js';
 import { log } from './log.js';
 
 const IMESSAGE_TIMEOUT_MS = 10_000;
 
 export interface AlertContext {
-  protectedName: string;
+  serverName: string;
+  user: string;
   risk: number;
   tactics: string[];
   timestamp: number;
@@ -28,25 +30,21 @@ function formatAlertText(ctx: AlertContext): string {
   const topTactics = ctx.tactics.slice(0, 3);
   return [
     'SCAMSHIELD ALERT',
-    `Protected: ${ctx.protectedName}`,
+    `Server: ${ctx.serverName}`,
+    `Flagged user: ${ctx.user}`,
     `Risk score: ${Math.round(ctx.risk)}/100`,
     topTactics.length > 0 ? `Detected tactics: ${topTactics.join(', ')}` : 'Detected tactics: none recorded',
     `Time: ${when}`,
-    'ScamShield ended the call to protect them.',
+    'ScamShield deleted the message and muted the user.',
   ].join('\n');
 }
 
-async function deliverTelegram(contact: Contact, text: string): Promise<DeliveryResult> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    return { contact: contact.name, channel: 'telegram', ok: false, error: 'Telegram is not configured' };
+async function deliverDiscord(contact: Contact, text: string, discord: DiscordChannel | null): Promise<DeliveryResult> {
+  if (!discord) {
+    return { contact: contact.name, channel: 'discord', ok: false, error: 'Discord is not connected' };
   }
-  try {
-    await sendTelegramMessage(token, contact.address, text);
-    return { contact: contact.name, channel: 'telegram', ok: true };
-  } catch (err) {
-    return { contact: contact.name, channel: 'telegram', ok: false, error: err instanceof Error ? err.message : 'send failed' };
-  }
+  const result = await sendDiscordAlert(discord, contact.address, text);
+  return { contact: contact.name, channel: 'discord', ok: result.ok, error: result.error };
 }
 
 /**
@@ -88,13 +86,20 @@ async function deliverIMessage(contact: Contact, text: string): Promise<Delivery
   }
 }
 
-/** Dispatches a family alert to every contact. One contact failing never blocks the others. */
-export async function dispatchAlerts(contacts: Contact[], ctx: AlertContext): Promise<DeliveryResult[]> {
+/**
+ * Dispatches a scam alert to every contact. One contact failing never blocks the others.
+ * Discord alerts route through the shared connected bot client; iMessage stays local.
+ */
+export async function dispatchAlerts(
+  contacts: Contact[],
+  ctx: AlertContext,
+  discord: DiscordChannel | null = null,
+): Promise<DeliveryResult[]> {
   const text = formatAlertText(ctx);
   const results: DeliveryResult[] = [];
   for (const contact of contacts) {
     try {
-      const result = contact.channel === 'telegram' ? await deliverTelegram(contact, text) : await deliverIMessage(contact, text);
+      const result = contact.channel === 'discord' ? await deliverDiscord(contact, text, discord) : await deliverIMessage(contact, text);
       results.push(result);
     } catch (err) {
       log.warn('Alert dispatch threw unexpectedly:', err instanceof Error ? err.message : err);
@@ -105,9 +110,9 @@ export async function dispatchAlerts(contacts: Contact[], ctx: AlertContext): Pr
 }
 
 export function summarizeDeliveries(deliveries: DeliveryResult[]): string {
-  if (deliveries.length === 0) return 'No family contacts configured — no alert sent.';
+  if (deliveries.length === 0) return 'No contacts configured — no alert sent.';
   const successful = deliveries.filter((d) => d.ok);
-  if (successful.length === 0) return 'Family alert attempted but delivery failed for all contacts.';
-  const label = (d: DeliveryResult) => `${d.contact} (${d.channel === 'telegram' ? 'Telegram' : 'iMessage'})`;
-  return `Family alert sent to ${successful.map(label).join(', ')}.`;
+  if (successful.length === 0) return 'Alert attempted but delivery failed for all contacts.';
+  const label = (d: DeliveryResult) => `${d.contact} (${d.channel === 'discord' ? 'Discord' : 'iMessage'})`;
+  return `Alert sent to ${successful.map(label).join(', ')}.`;
 }

@@ -12,25 +12,29 @@ export type TacticId =
   | 'prompt_injection'
   | 'generic_pressure';
 
-export type Role = 'scammer' | 'grandma' | 'guardian';
+export type Role = 'scammer' | 'guardian';
 
-/** Delivery channel for family-contact alerts. Shared by settings contacts and delivery receipts. */
-export type DeliveryChannel = 'telegram' | 'imessage';
+/** Delivery channel for alert contacts. Shared by settings contacts and delivery receipts. */
+export type DeliveryChannel = 'discord' | 'imessage';
+
+export type FlagAction = 'deleted' | 'warned' | 'muted' | 'reported';
 
 export type Event =
-  | { type: 'utterance'; role: Role; text: string; ts: number }
-  | { type: 'tactic'; tactic: TacticId; confidence: number; evidence: string; ts: number }
-  | { type: 'risk'; score: number; ts: number }
-  | { type: 'intervention'; level: 'coach' | 'takeover' | 'alert'; text: string; ts: number }
+  | { type: 'utterance'; role: Role; text: string; ts: number; userId?: string; avatar?: string }
+  | { type: 'tactic'; tactic: TacticId; confidence: number; evidence: string; ts: number; userId?: string }
+  | { type: 'risk'; score: number; ts: number; userId?: string }
+  | { type: 'intervention'; level: 'flag'; text: string; ts: number; userId?: string }
+  | { type: 'action'; action: FlagAction; userId: string; detail?: string; ts: number }
   | {
       type: 'session';
       state: 'start' | 'end';
       id: string;
       ts: number;
-      /** Which surface originated the session. Absent/undefined means the dashboard (legacy default). */
-      channel?: 'dashboard' | 'telegram';
-      /** Caller alias — populated for telegram-originated sessions so the dashboard can mirror it. */
+      /** Caller alias (the Discord member's username). */
       alias?: string;
+      /** Discord user id behind a monitored session, if any. */
+      userId?: string;
+      avatar?: string;
     }
   | { type: 'delivery'; contact: string; channel: DeliveryChannel; ok: boolean; ts: number };
 
@@ -65,6 +69,5 @@ export const TACTIC_HUE: Record<TacticId, string> = {
   generic_pressure: '#94a3b8',
 };
 
-/** Risk-score cutoffs mirrored from apps/server/src/risk.ts and RiskGauge —
- * the coach and takeover intervention thresholds. */
-export const RISK_THRESHOLDS = { coach: 45, takeover: 80 } as const;
+/** Risk-score cutoff for the active sensitivity level. Read-only — server-computed. */
+export const RISK_FLAG_THRESHOLD = 50 as const;

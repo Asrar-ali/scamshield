@@ -3,7 +3,7 @@
 // sources behind a single builder means the forensic report is byte-identical
 // live and in replay.
 
-import { RISK_THRESHOLDS, type Event, type TacticId } from '../types';
+import { RISK_FLAG_THRESHOLD, type Event, type TacticId } from '../types';
 
 export interface RiskSample {
   score: number;
@@ -22,7 +22,7 @@ export interface TacticLedgerRow {
 }
 
 export interface InterventionMoment {
-  level: 'coach' | 'takeover';
+  level: 'flag';
   ts: number;
 }
 
@@ -38,7 +38,7 @@ export interface AutopsyData {
   tacticMarkers: TacticMarker[];
   ledger: TacticLedgerRow[];
   interventions: InterventionMoment[];
-  thresholds: { coach: number; takeover: number };
+  thresholds: { flag: number };
 }
 
 const MAX_EVIDENCE_PER_TACTIC = 3;
@@ -79,7 +79,7 @@ export interface LiveAutopsyInput {
   turns: number;
   riskSamples: RiskSample[];
   hits: { tactic: TacticId; evidence: string; ts: number }[];
-  interventions: { level: 'coach' | 'takeover' | 'alert'; ts: number }[];
+  interventions: { level: 'flag'; ts: number }[];
 }
 
 /** Build from live App state captured over the WebSocket stream. */
@@ -98,10 +98,8 @@ export function buildAutopsyFromLive(input: LiveAutopsyInput): AutopsyData {
     riskSamples,
     tacticMarkers: chronoHits.map((h) => ({ tactic: h.tactic, ts: h.ts })),
     ledger: toLedger(chronoHits),
-    interventions: input.interventions
-      .filter((i): i is { level: 'coach' | 'takeover'; ts: number } => i.level !== 'alert')
-      .sort((a, b) => a.ts - b.ts),
-    thresholds: { ...RISK_THRESHOLDS },
+    interventions: [...input.interventions].sort((a, b) => a.ts - b.ts),
+    thresholds: { flag: RISK_FLAG_THRESHOLD },
   };
 }
 
@@ -131,10 +129,9 @@ export function buildAutopsyFromEvents(events: Event[], fallbackAlias: string): 
   );
   const interventions = ordered
     .filter((e): e is Extract<Event, { type: 'intervention' }> => e.type === 'intervention')
-    .map((e) => ({ level: e.level, ts: e.ts }))
-    .filter((m): m is InterventionMoment => m.level !== 'alert');
+    .map((e) => ({ level: e.level, ts: e.ts }));
   const turns = ordered.filter((e) => e.type === 'utterance' && e.role === 'scammer').length;
-  const caught = interventions.some((i) => i.level === 'takeover');
+  const caught = interventions.length > 0;
 
   return {
     alias,
@@ -148,6 +145,6 @@ export function buildAutopsyFromEvents(events: Event[], fallbackAlias: string): 
     tacticMarkers: hits.map((h) => ({ tactic: h.tactic, ts: h.ts })),
     ledger: toLedger(hits),
     interventions,
-    thresholds: { ...RISK_THRESHOLDS },
+    thresholds: { flag: RISK_FLAG_THRESHOLD },
   };
 }

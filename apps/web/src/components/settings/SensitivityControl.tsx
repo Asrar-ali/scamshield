@@ -7,9 +7,9 @@ interface SensitivityControlProps {
 }
 
 const OPTIONS: { id: Sensitivity; label: string; blurb: string }[] = [
-  { id: 'relaxed', label: 'Relaxed', blurb: 'Coaches and takes over later than Balanced.' },
-  { id: 'balanced', label: 'Balanced', blurb: 'Default trigger timing.' },
-  { id: 'paranoid', label: 'Paranoid', blurb: 'Coaches and takes over sooner than Balanced.' },
+  { id: 'relaxed', label: 'Relaxed', blurb: 'Flags only higher-risk messages.' },
+  { id: 'balanced', label: 'Balanced', blurb: 'Default flag threshold.' },
+  { id: 'paranoid', label: 'Paranoid', blurb: 'Flags sooner than Balanced.' },
 ];
 
 export function SensitivityControl({ sensitivity, thresholds, onChange }: SensitivityControlProps) {
@@ -30,7 +30,7 @@ export function SensitivityControl({ sensitivity, thresholds, onChange }: Sensit
             >
               {opt.label}
               <span className="segmented-option-desc">
-                {active ? `Coaches at ${thresholds.coach}, seizes at ${thresholds.takeover}.` : opt.blurb}
+                {active ? `Flags at risk ${thresholds.flag}.` : opt.blurb}
               </span>
             </button>
           );

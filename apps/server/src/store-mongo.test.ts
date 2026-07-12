@@ -88,18 +88,15 @@ describe('createMongoStore', () => {
   it('saveSettings upserts the singleton settings document', async () => {
     const store = createMongoStore('mongodb://test');
     store.saveSettings?.({
-      protectedName: 'Rose',
-      notifyOn: 'takeover',
+      serverName: 'My Server',
       contacts: [],
       model: '',
-      voices: { grandma: '', guardian: '' },
       sensitivity: 'balanced',
-      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening' },
     });
     await flush();
     expect(updateOne).toHaveBeenCalledWith(
       { _id: 'singleton' },
-      { $set: expect.objectContaining({ protectedName: 'Rose', notifyOn: 'takeover' }) },
+      { $set: expect.objectContaining({ serverName: 'My Server', sensitivity: 'balanced' }) },
       { upsert: true },
     );
   });
@@ -114,14 +111,12 @@ describe('createMongoStore', () => {
     const store = createMongoStore('mongodb://test');
     findOne.mockResolvedValueOnce({
       _id: 'singleton',
-      protectedName: 'Rose',
-      notifyOn: 'coach',
-      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '123' }],
+      serverName: 'My Server',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'discord', address: '123' }],
     });
     expect(await store.getSettings?.()).toEqual({
-      protectedName: 'Rose',
-      notifyOn: 'coach',
-      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '123' }],
+      serverName: 'My Server',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'discord', address: '123' }],
     });
   });
 
@@ -136,38 +131,29 @@ describe('createMongoStore', () => {
     updateOne.mockRejectedValueOnce(new Error('boom'));
     expect(() =>
       store.saveSettings?.({
-        protectedName: 'Rose',
-        notifyOn: 'takeover',
+        serverName: 'My Server',
         contacts: [],
         model: '',
-        voices: { grandma: '', guardian: '' },
         sensitivity: 'balanced',
-        persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening' },
       }),
     ).not.toThrow();
     await flush();
   });
 
-  it('getSettings maps model/voices/sensitivity/persona through from the stored document', async () => {
+  it('getSettings maps model/sensitivity through from the stored document', async () => {
     const store = createMongoStore('mongodb://test');
     findOne.mockResolvedValueOnce({
       _id: 'singleton',
-      protectedName: 'Rose',
-      notifyOn: 'coach',
+      serverName: 'My Server',
       contacts: [],
       model: 'gemini-3-pro-preview',
-      voices: { grandma: 'v1', guardian: 'v2' },
       sensitivity: 'paranoid',
-      persona: { name: 'Gigi', age: 82, city: 'Halifax', grandkid: 'Max', quirks: 'baking bread' },
     });
     expect(await store.getSettings?.()).toEqual({
-      protectedName: 'Rose',
-      notifyOn: 'coach',
+      serverName: 'My Server',
       contacts: [],
       model: 'gemini-3-pro-preview',
-      voices: { grandma: 'v1', guardian: 'v2' },
       sensitivity: 'paranoid',
-      persona: { name: 'Gigi', age: 82, city: 'Halifax', grandkid: 'Max', quirks: 'baking bread' },
     });
   });
 

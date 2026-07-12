@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import type { AlertTestResponse, Contact, TelegramStatus } from '../lib/api';
+import type { AlertTestResponse, Contact, DiscordStatus } from '../lib/api';
 import { postAlertTest } from '../lib/api';
-import { CheckIcon, CrossIcon, MessageIcon, TelegramIcon } from './icons';
+import { CheckIcon, CrossIcon, DiscordIcon, MessageIcon } from './icons';
 
 const MAX_CONTACTS = 5;
 
 interface ContactsSectionProps {
   contacts: Contact[];
-  telegramStatus: TelegramStatus;
+  discordStatus: DiscordStatus;
   onChange: (contacts: Contact[]) => void;
 }
 
@@ -17,16 +17,16 @@ function makeId(): string {
 }
 
 function channelLabel(channel: Contact['channel']): string {
-  return channel === 'telegram' ? 'Telegram' : 'iMessage';
+  return channel === 'discord' ? 'Discord' : 'iMessage';
 }
 
 function ChannelGlyph({ channel }: { channel: Contact['channel'] }) {
-  return channel === 'telegram' ? <TelegramIcon width={13} height={13} /> : <MessageIcon width={13} height={13} />;
+  return channel === 'discord' ? <DiscordIcon width={13} height={13} /> : <MessageIcon width={13} height={13} />;
 }
 
-export function ContactsSection({ contacts, telegramStatus, onChange }: ContactsSectionProps) {
+export function ContactsSection({ contacts, discordStatus, onChange }: ContactsSectionProps) {
   const [name, setName] = useState('');
-  const [channel, setChannel] = useState<Contact['channel']>('telegram');
+  const [channel, setChannel] = useState<Contact['channel']>('discord');
   const [address, setAddress] = useState('');
   const [sending, setSending] = useState(false);
   const [testResult, setTestResult] = useState<AlertTestResponse | 'error' | null>(null);
@@ -53,14 +53,14 @@ export function ContactsSection({ contacts, telegramStatus, onChange }: Contacts
   return (
     <div className="settings-section">
       <div className="settings-section-head">
-        <h3>Family Contacts</h3>
+        <h3>Alert Contacts</h3>
         <span className="settings-section-count">
           {contacts.length} / {MAX_CONTACTS}
         </span>
       </div>
 
       <div className="contact-list">
-        {contacts.length === 0 && <p className="empty">No contacts yet — add someone to notify.</p>}
+        {contacts.length === 0 && <p className="empty">No contacts yet — add a mod-log channel or person to notify.</p>}
         {contacts.map((c) => (
           <div key={c.id} className="contact-row">
             <span className={`channel-badge channel-badge--${c.channel}`}>
@@ -77,45 +77,45 @@ export function ContactsSection({ contacts, telegramStatus, onChange }: Contacts
       </div>
 
       {atLimit ? (
-        <p className="settings-hint">Maximum {MAX_CONTACTS} family contacts.</p>
+        <p className="settings-hint">Maximum {MAX_CONTACTS} alert contacts.</p>
       ) : (
         <form className="add-contact-form" onSubmit={addContact}>
           <div className="add-contact-row">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Contact name" />
             <select value={channel} onChange={(e) => setChannel(e.target.value as Contact['channel'])} aria-label="Contact channel">
-              <option value="telegram">Telegram</option>
+              <option value="discord">Discord</option>
               <option value="imessage">iMessage</option>
             </select>
           </div>
           <input
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            placeholder={channel === 'telegram' ? 'Chat ID' : 'Phone or email'}
+            placeholder={channel === 'discord' ? 'Channel ID or user ID' : 'Phone or email'}
             aria-label="Contact address"
           />
 
-          {channel === 'telegram' ? (
-            telegramStatus.recentChats.length > 0 ? (
+          {channel === 'discord' ? (
+            discordStatus.recentUsers.length > 0 ? (
               <div className="chat-suggestions">
-                {telegramStatus.recentChats.map((chat) => (
+                {discordStatus.recentUsers.map((user) => (
                   <button
-                    key={chat.chatId}
+                    key={user.userId}
                     type="button"
                     className="suggestion-chip"
                     onClick={() => {
-                      setAddress(chat.chatId);
-                      if (!name.trim()) setName(chat.name);
+                      setAddress(user.userId);
+                      if (!name.trim()) setName(user.name);
                     }}
                   >
-                    {chat.name} — chat {chat.chatId}
+                    {user.name} — user {user.userId}
                   </button>
                 ))}
               </div>
             ) : (
               <p className="settings-hint">
-                {telegramStatus.botUsername
-                  ? `Ask your family member to message @${telegramStatus.botUsername} first.`
-                  : 'Telegram bot is not connected yet.'}
+                {discordStatus.botTag
+                  ? `Bot is online as ${discordStatus.botTag} in ${discordStatus.guildName ?? 'your server'}.`
+                  : 'Discord bot is not connected yet.'}
               </p>
             )
           ) : (

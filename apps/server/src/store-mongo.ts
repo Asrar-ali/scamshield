@@ -82,13 +82,10 @@ export function createMongoStore(uri: string): Store {
         const doc = await settings.findOne({ _id: SETTINGS_DOC_ID });
         if (!doc) return null;
         return {
-          protectedName: doc.protectedName,
-          notifyOn: doc.notifyOn,
+          serverName: doc.serverName,
           contacts: doc.contacts,
           model: doc.model,
-          voices: doc.voices,
           sensitivity: doc.sensitivity,
-          persona: doc.persona,
         };
       } catch (err) {
         log.warn('Mongo store getSettings failed:', err instanceof Error ? err.message : err);

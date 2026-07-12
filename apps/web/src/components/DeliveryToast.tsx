@@ -1,5 +1,5 @@
 import type { DeliveryChannel } from '../types';
-import { CheckIcon, CrossIcon, MessageIcon, TelegramIcon } from './icons';
+import { CheckIcon, CrossIcon, DiscordIcon, MessageIcon } from './icons';
 
 export interface DeliveryToastItem {
   id: number;
@@ -13,7 +13,7 @@ function timestamp(): string {
 }
 
 function channelLabel(channel: DeliveryChannel): string {
-  return channel === 'telegram' ? 'Telegram' : 'iMessage';
+  return channel === 'discord' ? 'Discord' : 'iMessage';
 }
 
 /** OS-style notification toast for the most recent delivery receipt — mirrors
@@ -27,7 +27,7 @@ export function DeliveryToast({ toasts, onDismiss }: { toasts: DeliveryToastItem
       {toasts.map((t) => (
         <div key={t.id} className={`phone-toast delivery-toast ${t.ok ? 'ok' : 'fail'}`} role="status">
           <div className="phone-toast-icon">
-            {t.channel === 'telegram' ? <TelegramIcon width={16} height={16} /> : <MessageIcon width={16} height={16} />}
+            {t.channel === 'discord' ? <DiscordIcon width={16} height={16} /> : <MessageIcon width={16} height={16} />}
           </div>
           <div className="phone-toast-body">
             <div className="phone-toast-head">

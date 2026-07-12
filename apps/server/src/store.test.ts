@@ -63,13 +63,10 @@ describe('createInMemoryStore', () => {
   it('keeps saved settings in a field and returns them on getSettings', async () => {
     const store = createInMemoryStore();
     const settings = {
-      protectedName: 'Rose',
-      notifyOn: 'coach' as const,
+      serverName: 'My Server',
       contacts: [],
       model: '',
-      voices: { grandma: '', guardian: '' },
       sensitivity: 'balanced' as const,
-      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening' },
     };
     store.saveSettings?.(settings);
     expect(await store.getSettings?.()).toEqual(settings);

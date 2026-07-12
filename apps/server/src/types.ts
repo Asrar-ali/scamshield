@@ -11,15 +11,24 @@ export type TacticId =
   | 'prompt_injection'
   | 'generic_pressure';
 
-export type Role = 'scammer' | 'grandma' | 'guardian';
+export type Role = 'scammer' | 'guardian';
 
 export type Event =
-  | { type: 'utterance'; role: Role; text: string; ts: number }
-  | { type: 'tactic'; tactic: TacticId; confidence: number; evidence: string; ts: number }
-  | { type: 'risk'; score: number; ts: number }
-  | { type: 'intervention'; level: 'coach' | 'takeover' | 'alert'; text: string; ts: number }
-  | { type: 'session'; state: 'start' | 'end'; id: string; ts: number; channel?: 'dashboard' | 'telegram'; alias?: string }
-  | { type: 'delivery'; contact: string; channel: 'telegram' | 'imessage'; ok: boolean; ts: number };
+  | { type: 'utterance'; role: Role; text: string; ts: number; userId?: string; avatar?: string }
+  | { type: 'tactic'; tactic: TacticId; confidence: number; evidence: string; ts: number; userId?: string }
+  | { type: 'risk'; score: number; ts: number; userId?: string }
+  | { type: 'intervention'; level: 'flag'; text: string; ts: number; userId?: string }
+  | { type: 'action'; action: 'deleted' | 'warned' | 'muted' | 'reported'; userId: string; detail?: string; ts: number }
+  | {
+      type: 'session';
+      state: 'start' | 'end';
+      id: string;
+      ts: number;
+      alias?: string;
+      userId?: string;
+      avatar?: string;
+    }
+  | { type: 'delivery'; contact: string; channel: 'discord' | 'imessage'; ok: boolean; ts: number };
 
 export interface TacticMeta {
   id: TacticId;
@@ -34,8 +43,7 @@ export interface Detection {
   evidence: string;
 }
 
-export type NotifyOn = 'coach' | 'takeover';
-export type ContactChannel = 'telegram' | 'imessage';
+export type ContactChannel = 'discord' | 'imessage';
 export type Sensitivity = 'relaxed' | 'balanced' | 'paranoid';
 
 export interface Contact {
@@ -45,25 +53,10 @@ export interface Contact {
   address: string;
 }
 
-export interface VoiceSettings {
-  grandma: string;
-  guardian: string;
-}
-
-export interface PersonaSettings {
-  name: string;
-  age: number;
-  city: string;
-  grandkid: string;
-  quirks: string;
-}
-
 export interface Settings {
-  protectedName: string;
-  notifyOn: NotifyOn;
+  /** Display name for the protected server/guild, used in alert text. */
+  serverName: string;
   contacts: Contact[];
   model: string;
-  voices: VoiceSettings;
   sensitivity: Sensitivity;
-  persona: PersonaSettings;
 }

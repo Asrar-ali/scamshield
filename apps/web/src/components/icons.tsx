@@ -83,11 +83,11 @@ export const GearIcon = (p: IconProps) => (
   </Icon>
 );
 
-export const TelegramIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M21.5 3 2.7 10.5c-1 .4-1 1.6.1 1.9l4.5 1.4 1.7 5.4c.3.9 1.4 1.1 2 .4l2.5-2.7 4.6 3.4c.8.6 1.9.1 2.1-.9L21.5 3Z" />
-    <path d="M7.3 13.8 18 6.2" />
-  </Icon>
+/** Discord game-controller-ish wordmark glyph (filled, uses currentColor). */
+export const DiscordIcon = (p: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
+    <path d="M19.3 5.3A16.6 16.6 0 0 0 15.1 4l-.2.4a12.7 12.7 0 0 1 3.7 1.2 13.4 13.4 0 0 0-11-.4l-.4.2A12.8 12.8 0 0 1 11 4.4L10.8 4a16.6 16.6 0 0 0-4.2 1.3C3.6 9.7 2.8 14 3.2 18.2A16.7 16.7 0 0 0 8.3 21l.6-1c-.8-.3-1.6-.7-2.3-1.2l.2-.1a11.9 11.9 0 0 0 10.3 0l.2.1c-.7.5-1.5.9-2.3 1.2l.6 1a16.6 16.6 0 0 0 5.1-2.8c.5-4.9-.8-9.2-3.4-12.9ZM9.3 15.6c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm5.4 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z" />
+  </svg>
 );
 
 export const MessageIcon = (p: IconProps) => (
@@ -105,6 +105,33 @@ export const CheckIcon = (p: IconProps) => (
 export const CrossIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M5 5l14 14M19 5 5 19" />
+  </Icon>
+);
+
+export const TrashIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14M10 10v6M14 10v6" />
+  </Icon>
+);
+
+export const VolumeOffIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
+    <path d="M16 9.5l4 5M20 9.5l-4 5" />
+  </Icon>
+);
+
+export const AlertIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3.5 2.5 20h19L12 3.5Z" />
+    <path d="M12 10v4M12 17h.01" />
+  </Icon>
+);
+
+export const ShieldIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 2.5 5 5v5c0 4.2 2.9 7.4 7 8.8 4.1-1.4 7-4.6 7-8.8V5l-7-2.5Z" />
+    <path d="M9 12l2 2 4-4" />
   </Icon>
 );
 

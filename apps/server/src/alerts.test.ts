@@ -1,20 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const sendTelegramMessage = vi.fn();
-vi.mock('./telegram.js', () => ({ sendTelegramMessage: (...args: unknown[]) => sendTelegramMessage(...args) }));
+const sendDiscordAlert = vi.fn();
+vi.mock('./discord.js', () => ({
+  sendDiscordAlert: (...args: unknown[]) => sendDiscordAlert(...args),
+  discordEnabled: () => Boolean(process.env.DISCORD_BOT_TOKEN),
+}));
 
 const execFile = vi.fn();
 vi.mock('node:child_process', () => ({ execFile: (...args: unknown[]) => execFile(...args) }));
 
 const { dispatchAlerts, imessageEnabled, summarizeDeliveries } = await import('./alerts.js');
 import type { Contact } from './types.js';
+import type { DiscordChannel } from './discord.js';
 
-function telegramContact(overrides: Partial<Contact> = {}): Contact {
-  return { id: 't1', name: 'Sarah', channel: 'telegram', address: '111', ...overrides };
+function discordContact(overrides: Partial<Contact> = {}): Contact {
+  return { id: 'd1', name: 'Sarah', channel: 'discord', address: '111', ...overrides };
 }
 
 function imessageContact(overrides: Partial<Contact> = {}): Contact {
   return { id: 'i1', name: 'Tom', channel: 'imessage', address: 'tom@example.com', ...overrides };
+}
+
+/** Minimal stub satisfying the DiscordChannel shape dispatchAlerts needs. */
+function makeDiscord(): DiscordChannel {
+  return {
+    getClient: () => ({} as never),
+    getBotTag: () => 'ScamShield#0001',
+    getGuildName: () => 'Test Guild',
+    getRecentUsers: () => [],
+    getMonitoredUsers: () => [],
+    stop: () => undefined,
+  };
 }
 
 describe('imessageEnabled', () => {
@@ -37,39 +53,36 @@ describe('imessageEnabled', () => {
 
 describe('dispatchAlerts', () => {
   afterEach(() => {
-    delete process.env.TELEGRAM_BOT_TOKEN;
-    delete process.env.SCAMSHIELD_IMESSAGE_ENABLED;
     vi.clearAllMocks();
   });
 
-  const ctx = { protectedName: 'Rose', risk: 92, tactics: ['Payment Redirection', 'Urgency Pressure'], timestamp: 1700000000000 };
+  const ctx = { serverName: 'My Server', user: 'ScammerTom', risk: 92, tactics: ['Payment Redirection', 'Urgency Pressure'], timestamp: 1700000000000 };
 
-  it('delivers a telegram alert successfully when TELEGRAM_BOT_TOKEN is set', async () => {
-    process.env.TELEGRAM_BOT_TOKEN = 'tok';
-    sendTelegramMessage.mockResolvedValue(undefined);
+  it('delivers a discord alert successfully when the bot client is connected', async () => {
+    sendDiscordAlert.mockResolvedValue({ ok: true });
 
-    const results = await dispatchAlerts([telegramContact()], ctx);
-    expect(results).toEqual([{ contact: 'Sarah', channel: 'telegram', ok: true }]);
-    expect(sendTelegramMessage).toHaveBeenCalledWith('tok', '111', expect.stringContaining('SCAMSHIELD ALERT'));
-    const text = sendTelegramMessage.mock.calls[0][2] as string;
-    expect(text).toContain('Rose');
+    const results = await dispatchAlerts([discordContact()], ctx, makeDiscord());
+    expect(results).toEqual([{ contact: 'Sarah', channel: 'discord', ok: true }]);
+    expect(sendDiscordAlert).toHaveBeenCalledWith(expect.anything(), '111', expect.stringContaining('SCAMSHIELD ALERT'));
+    const text = sendDiscordAlert.mock.calls[0][2] as string;
+    expect(text).toContain('My Server');
+    expect(text).toContain('ScammerTom');
     expect(text).toContain('92');
     expect(text).toContain('Payment Redirection');
-    expect(text).toContain('ScamShield ended the call to protect them.');
+    expect(text).toContain('deleted the message and muted the user');
   });
 
-  it('marks telegram delivery as failed (not thrown) when TELEGRAM_BOT_TOKEN is unset', async () => {
-    delete process.env.TELEGRAM_BOT_TOKEN;
-    const results = await dispatchAlerts([telegramContact()], ctx);
-    expect(results).toEqual([{ contact: 'Sarah', channel: 'telegram', ok: false, error: 'Telegram is not configured' }]);
-    expect(sendTelegramMessage).not.toHaveBeenCalled();
+  it('marks discord delivery as failed when no discord channel is passed', async () => {
+    const results = await dispatchAlerts([discordContact()], ctx, null);
+    expect(results).toEqual([{ contact: 'Sarah', channel: 'discord', ok: false, error: 'Discord is not connected' }]);
+    expect(sendDiscordAlert).not.toHaveBeenCalled();
   });
 
-  it('marks telegram delivery as failed when sendTelegramMessage rejects', async () => {
-    process.env.TELEGRAM_BOT_TOKEN = 'tok';
-    sendTelegramMessage.mockRejectedValue(new Error('telegram down'));
-    const results = await dispatchAlerts([telegramContact()], ctx);
-    expect(results).toEqual([{ contact: 'Sarah', channel: 'telegram', ok: false, error: 'telegram down' }]);
+  it('marks discord delivery as failed when sendDiscordAlert reports failure', async () => {
+    sendDiscordAlert.mockResolvedValue({ ok: false, error: 'missing permissions' });
+
+    const results = await dispatchAlerts([discordContact()], ctx, makeDiscord());
+    expect(results).toEqual([{ contact: 'Sarah', channel: 'discord', ok: false, error: 'missing permissions' }]);
   });
 
   it('skips iMessage delivery when SCAMSHIELD_IMESSAGE_ENABLED is not "1"', async () => {
@@ -110,47 +123,46 @@ describe('dispatchAlerts', () => {
   });
 
   it('one contact failing never blocks delivery to the others', async () => {
-    process.env.TELEGRAM_BOT_TOKEN = 'tok';
     process.env.SCAMSHIELD_IMESSAGE_ENABLED = '1';
-    sendTelegramMessage.mockRejectedValue(new Error('telegram down'));
+    sendDiscordAlert.mockResolvedValue({ ok: false, error: 'discord down' });
     execFile.mockImplementation((_cmd, _args, _opts, cb) => cb(null, '', ''));
 
-    const results = await dispatchAlerts([telegramContact(), imessageContact()], ctx);
+    const results = await dispatchAlerts([discordContact(), imessageContact()], ctx, makeDiscord());
     expect(results).toEqual([
-      { contact: 'Sarah', channel: 'telegram', ok: false, error: 'telegram down' },
+      { contact: 'Sarah', channel: 'discord', ok: false, error: 'discord down' },
       { contact: 'Tom', channel: 'imessage', ok: true },
     ]);
   });
 
   it('returns an empty array for no contacts', async () => {
-    expect(await dispatchAlerts([], ctx)).toEqual([]);
+    expect(await dispatchAlerts([], ctx, makeDiscord())).toEqual([]);
   });
 });
 
 describe('summarizeDeliveries', () => {
   it('reports no contacts configured', () => {
-    expect(summarizeDeliveries([])).toBe('No family contacts configured — no alert sent.');
+    expect(summarizeDeliveries([])).toBe('No contacts configured — no alert sent.');
   });
 
   it('reports total failure distinctly from no contacts', () => {
-    expect(summarizeDeliveries([{ contact: 'Sarah', channel: 'telegram', ok: false, error: 'x' }])).toBe(
-      'Family alert attempted but delivery failed for all contacts.',
+    expect(summarizeDeliveries([{ contact: 'Sarah', channel: 'discord', ok: false, error: 'x' }])).toBe(
+      'Alert attempted but delivery failed for all contacts.',
     );
   });
 
   it('names each successful delivery with its channel', () => {
     const text = summarizeDeliveries([
-      { contact: 'Sarah', channel: 'telegram', ok: true },
+      { contact: 'Sarah', channel: 'discord', ok: true },
       { contact: 'Tom', channel: 'imessage', ok: true },
     ]);
-    expect(text).toBe('Family alert sent to Sarah (Telegram), Tom (iMessage).');
+    expect(text).toBe('Alert sent to Sarah (Discord), Tom (iMessage).');
   });
 
   it('only lists the successful deliveries when some fail', () => {
     const text = summarizeDeliveries([
-      { contact: 'Sarah', channel: 'telegram', ok: true },
+      { contact: 'Sarah', channel: 'discord', ok: true },
       { contact: 'Tom', channel: 'imessage', ok: false, error: 'nope' },
     ]);
-    expect(text).toBe('Family alert sent to Sarah (Telegram).');
+    expect(text).toBe('Alert sent to Sarah (Discord).');
   });
 });

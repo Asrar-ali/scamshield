@@ -1,9 +1,8 @@
-import { RISK_THRESHOLDS } from '../types';
+import { RISK_FLAG_THRESHOLD } from '../types';
 import { RiskTimeline } from './RiskTimeline';
 import type { RiskSample, TacticMarker, InterventionMoment } from '../lib/autopsy';
 
-const COACH_THRESHOLD = RISK_THRESHOLDS.coach;
-const TAKEOVER_THRESHOLD = RISK_THRESHOLDS.takeover;
+const FLAG_THRESHOLD = RISK_FLAG_THRESHOLD;
 
 const CX = 100;
 const CY = 100;
@@ -38,18 +37,13 @@ function degFor(value: number) {
 }
 
 export function RiskGauge({ risk, samples, markers, interventions, startTs, endTs }: RiskGaugeProps) {
-  const level = risk >= TAKEOVER_THRESHOLD ? 'critical' : risk >= COACH_THRESHOLD ? 'elevated' : 'low';
+  const level = risk >= FLAG_THRESHOLD ? 'critical' : 'low';
   const hasTrace = Boolean(samples && samples.length >= 2 && startTs);
   const clamped = Math.min(100, Math.max(0, risk));
   const valueDeg = degFor(clamped);
 
   const trackPath = arc(START_DEG, START_DEG + SWEEP_DEG);
   const valuePath = arc(START_DEG, Math.max(START_DEG + 0.01, valueDeg));
-
-  const ticks = [
-    { at: COACH_THRESHOLD, label: 'COACH', cls: 'coach' },
-    { at: TAKEOVER_THRESHOLD, label: 'TAKEOVER', cls: 'takeover' },
-  ];
 
   return (
     <div className={`panel gauge-panel risk-${level}`}>
@@ -71,22 +65,14 @@ export function RiskGauge({ risk, samples, markers, interventions, startTs, endT
           <path d={trackPath} className="gauge-track" fill="none" strokeLinecap="round" />
           <path d={valuePath} className="gauge-value" fill="none" stroke="url(#gauge-grad)" strokeLinecap="round" />
 
-          {ticks.map((t) => {
-            const d = degFor(t.at);
+          {(() => {
+            const d = degFor(FLAG_THRESHOLD);
             const a = pt(d, R + 3);
             const b = pt(d, R - 11);
             return (
-              <line
-                key={t.at}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                className={`gauge-tick gauge-tick-${t.cls}`}
-                strokeLinecap="round"
-              />
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="gauge-tick gauge-tick-flag" strokeLinecap="round" />
             );
-          })}
+          })()}
 
           <g className="gauge-needle" style={{ transform: `rotate(${(clamped / 100) * SWEEP_DEG}deg)` }}>
             <line x1={CX} y1={CY} x2={pt(START_DEG, R - 16).x} y2={pt(START_DEG, R - 16).y} className="needle-arm" strokeLinecap="round" />
@@ -102,10 +88,7 @@ export function RiskGauge({ risk, samples, markers, interventions, startTs, endT
 
       <div className="gauge-legend">
         <span className="legend-item">
-          <span className="legend-dot coach" /> Coach {COACH_THRESHOLD}
-        </span>
-        <span className="legend-item">
-          <span className="legend-dot takeover" /> Takeover {TAKEOVER_THRESHOLD}
+          <span className="legend-dot flag" /> Flag {FLAG_THRESHOLD}
         </span>
       </div>
 
@@ -114,7 +97,7 @@ export function RiskGauge({ risk, samples, markers, interventions, startTs, endT
           samples={samples}
           markers={markers ?? []}
           interventions={interventions ?? []}
-          thresholds={RISK_THRESHOLDS}
+          thresholds={{ flag: FLAG_THRESHOLD }}
           startTs={startTs as number}
           endTs={(endTs as number | null) ?? Date.now()}
           variant="spark"

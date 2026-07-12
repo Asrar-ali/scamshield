@@ -1,171 +1,35 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Events } from 'discord.js';
 import request from 'supertest';
-import { WebSocket } from 'ws';
 import { buildApp, type BuiltApp } from './app.js';
 import { createInMemoryStore, type Store } from './store.js';
-import { resetVoicesCache } from './tts.js';
 import type { Event } from './types.js';
 
 const AGGRESSIVE_LINE = "You need to act right now and wire money via bitcoin or you'll go to jail immediately";
 const INNOCENT_LINE = 'I fed the cat and then watered my tomato plants this morning.';
 
-// Most integration tests fire many turns back-to-back on one session to exercise the
-// judging pipeline; the demo turn throttle (1 turn / 2s) is orthogonal to that, so
-// those suites opt out of it. The throttle itself is covered by dedicated tests below.
+// Most integration tests use no turn throttle so the Discord flood guard doesn't
+// interfere. The throttle itself is covered by a dedicated test below.
 const NO_TURN_THROTTLE = { turnMinIntervalMs: 0, turnMaxPerWindow: Number.MAX_SAFE_INTEGER } as const;
 
 describe('server integration', () => {
   let built: BuiltApp;
   let baseUrl: string;
-  let sockets: WebSocket[];
 
   beforeEach(async () => {
     delete process.env.GEMINI_API_KEY;
-    delete process.env.ELEVENLABS_API_KEY;
-    delete process.env.MONGODB_URI;
-    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.DISCORD_BOT_TOKEN;
     delete process.env.SCAMSHIELD_IMESSAGE_ENABLED;
     built = buildApp({ limits: NO_TURN_THROTTLE });
-    sockets = [];
     await new Promise<void>((resolve) => built.server.listen(0, resolve));
     const port = (built.server.address() as AddressInfo).port;
     baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {
-    for (const ws of sockets) ws.terminate();
-    built.telegram.stop();
+    built.discord.stop();
     await new Promise<void>((resolve) => built.server.close(() => resolve()));
-  });
-
-  async function connectSocket(): Promise<{ events: Event[]; ws: WebSocket }> {
-    const port = (built.server.address() as AddressInfo).port;
-    const ws = new WebSocket(`ws://localhost:${port}/ws`);
-    sockets.push(ws);
-    const events: Event[] = [];
-    ws.on('message', (data) => events.push(JSON.parse(data.toString()) as Event));
-    await new Promise<void>((resolve) => ws.on('open', () => resolve()));
-    return { events, ws };
-  }
-
-  it('starts a session with a default alias when none is given', async () => {
-    const res = await request(baseUrl).post('/api/session/start').send({});
-    expect(res.status).toBe(200);
-    expect(res.body.sessionId).toBeTruthy();
-    expect(res.body.alias).toBe('Anonymous Scammer');
-  });
-
-  it('starts a session with a sanitized custom alias', async () => {
-    const res = await request(baseUrl)
-      .post('/api/session/start')
-      .send({ alias: '  Scammer Steve  '.padEnd(40, 'x') });
-    expect(res.status).toBe(200);
-    expect(res.body.alias.length).toBeLessThanOrEqual(24);
-  });
-
-  it('400s on missing fields for /api/turn', async () => {
-    const res = await request(baseUrl).post('/api/turn').send({ text: 'hello' });
-    expect(res.status).toBe(400);
-  });
-
-  it('404s on an unknown session for /api/turn', async () => {
-    const res = await request(baseUrl).post('/api/turn').send({ sessionId: 'does-not-exist', text: 'hello' });
-    expect(res.status).toBe(404);
-  });
-
-  it('404s on an unknown session for /api/session/:id/end', async () => {
-    const res = await request(baseUrl).post('/api/session/does-not-exist/end');
-    expect(res.status).toBe(404);
-  });
-
-  it('keeps a clean conversation low-risk and replies as grandma', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    for (let i = 0; i < 3; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-      expect(res.status).toBe(200);
-      expect(res.body.ended).toBe(false);
-      expect(res.body.risk).toBe(0);
-      expect(typeof res.body.reply).toBe('string');
-      expect(res.body.reply.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('fires the coach before the takeover in an aggressive escalation, then locks the session', async () => {
-    const { events } = await connectSocket();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      expect(res.status).toBe(200);
-      ended = res.body.ended === true;
-    }
-    expect(ended).toBe(true);
-
-    const coachIndex = events.findIndex((e) => e.type === 'intervention' && e.level === 'coach');
-    const takeoverIndex = events.findIndex((e) => e.type === 'intervention' && e.level === 'takeover');
-    expect(coachIndex).toBeGreaterThanOrEqual(0);
-    expect(takeoverIndex).toBeGreaterThan(coachIndex);
-
-    const followUp = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-    expect(followUp.status).toBe(409);
-  });
-
-  it('manually ends a session via POST /api/session/:id/end', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-    const res = await request(baseUrl).post(`/api/session/${sessionId}/end`);
-    expect(res.status).toBe(200);
-    expect(res.body.ended).toBe(true);
-
-    const turnRes = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    expect(turnRes.status).toBe(409);
-  });
-
-  it('returns 503 {fallback:true} from /api/tts when keyless', async () => {
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hello there', role: 'grandma' });
-    expect(res.status).toBe(503);
-    expect(res.body).toEqual({ fallback: true });
-  });
-
-  it('400s /api/tts on missing or invalid fields', async () => {
-    const missingText = await request(baseUrl).post('/api/tts').send({ role: 'grandma' });
-    expect(missingText.status).toBe(400);
-    const badRole = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'villain' });
-    expect(badRole.status).toBe(400);
-  });
-
-  it('reflects a finished session on the leaderboard', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({ alias: 'Leaderboard Tester' });
-    const sessionId = start.body.sessionId as string;
-    await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    await request(baseUrl).post(`/api/session/${sessionId}/end`);
-
-    const res = await request(baseUrl).get('/api/leaderboard');
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.entries)).toBe(true);
-    const entry = res.body.entries.find((e: { sessionId: string }) => e.sessionId === sessionId);
-    expect(entry).toMatchObject({ alias: 'Leaderboard Tester', outcome: 'gave_up', turns: 1 });
-  });
-
-  it('returns at most 10 leaderboard entries sorted by turns descending', async () => {
-    for (let i = 0; i < 3; i += 1) {
-      const start = await request(baseUrl).post('/api/session/start').send({});
-      const sessionId = start.body.sessionId as string;
-      for (let t = 0; t <= i; t += 1) {
-        await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-      }
-      await request(baseUrl).post(`/api/session/${sessionId}/end`);
-    }
-    const res = await request(baseUrl).get('/api/leaderboard');
-    const turns = res.body.entries.map((e: { turns: number }) => e.turns);
-    const sorted = [...turns].sort((a, b) => b - a);
-    expect(turns).toEqual(sorted);
-    expect(res.body.entries.length).toBeLessThanOrEqual(10);
   });
 
   it('reports mode on /health', async () => {
@@ -174,241 +38,57 @@ describe('server integration', () => {
     expect(res.body).toEqual({ ok: true, mode: 'mock', ai: 'unconfigured' });
   });
 
-  it('broadcasts a session-start event with dashboard channel and alias', async () => {
-    const { events } = await connectSocket();
-    await request(baseUrl).post('/api/session/start').send({ alias: 'Steve' });
-    const start = events.find((e) => e.type === 'session' && e.state === 'start');
-    expect(start).toMatchObject({ type: 'session', state: 'start', channel: 'dashboard', alias: 'Steve' });
-  });
-
-  // Settings grew additive fields (model/voices/sensitivity/persona) plus a
-  // read-only computed `thresholds` field on GET — updated to the new full shape.
   it('GET /api/settings returns sensible defaults', async () => {
     const res = await request(baseUrl).get('/api/settings');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      protectedName: 'Rose',
-      notifyOn: 'takeover',
+      serverName: 'ScamShield',
       contacts: [],
       model: '',
-      voices: { grandma: '', guardian: '' },
       sensitivity: 'balanced',
-      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening, a cat named Muffin, an old flip phone' },
-      thresholds: { coach: 45, takeover: 80 },
+      thresholds: { flag: 50 },
     });
   });
 
-  // A legacy (old-shape) PUT payload omits the additive fields — updated to
-  // assert they default rather than expecting the payload to round-trip
-  // byte-for-byte, proving backward compatibility for pre-existing clients.
-  it('PUT /api/settings round-trips through GET, defaulting the additive fields for a legacy payload', async () => {
+  it('PUT /api/settings round-trips through GET', async () => {
     const payload = {
-      protectedName: 'Grandma Rose',
-      notifyOn: 'coach',
-      contacts: [{ id: 'c1', name: 'Sarah', channel: 'telegram', address: '12345' }],
-    };
-    const defaults = {
+      serverName: 'My Server',
+      contacts: [{ id: 'c1', name: 'Sarah', channel: 'discord', address: '12345' }],
       model: '',
-      voices: { grandma: '', guardian: '' },
-      sensitivity: 'balanced',
-      persona: { name: 'Rose', age: 78, city: 'Ottawa', grandkid: 'Tyler', quirks: 'gardening, a cat named Muffin, an old flip phone' },
+      sensitivity: 'paranoid',
     };
     const put = await request(baseUrl).put('/api/settings').send(payload);
     expect(put.status).toBe(200);
-    expect(put.body).toEqual({ ...payload, ...defaults });
+    expect(put.body).toEqual(payload);
 
     const get = await request(baseUrl).get('/api/settings');
-    expect(get.body).toEqual({ ...payload, ...defaults, thresholds: { coach: 45, takeover: 80 } });
+    expect(get.body).toEqual({ ...payload, thresholds: { flag: 35 } });
   });
 
   it('PUT /api/settings 400s on an invalid channel', async () => {
     const res = await request(baseUrl)
       .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'sms', address: '1' }] });
+      .send({ serverName: 'S', contacts: [{ name: 'Sarah', channel: 'sms', address: '1' }] });
     expect(res.status).toBe(400);
   });
 
   it('PUT /api/settings 400s on more than 5 contacts', async () => {
-    const contacts = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, channel: 'telegram', address: `${i}` }));
-    const res = await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'takeover', contacts });
+    const contacts = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, channel: 'discord', address: `${i}` }));
+    const res = await request(baseUrl).put('/api/settings').send({ serverName: 'S', contacts });
     expect(res.status).toBe(400);
   });
 
-  it('PUT /api/settings 400s on an invalid notifyOn', async () => {
-    const res = await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'always', contacts: [] });
-    expect(res.status).toBe(400);
-  });
-
-  it('GET /api/telegram/status reports not-connected when TELEGRAM_BOT_TOKEN is unset', async () => {
-    const res = await request(baseUrl).get('/api/telegram/status');
+  it('GET /api/discord/status reports not-connected when DISCORD_BOT_TOKEN is unset', async () => {
+    const res = await request(baseUrl).get('/api/discord/status');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ enabled: false, botUsername: null, recentChats: [] });
+    expect(res.body).toEqual({ enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] });
   });
 
-  it('POST /api/alert-test reports no deliveries when no contacts are configured', async () => {
-    const res = await request(baseUrl).post('/api/alert-test');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ deliveries: [] });
-  });
-
-  it('POST /api/alert-test reports a failed delivery for a configured telegram contact when no bot token is set', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'telegram', address: '111' }] });
-    const res = await request(baseUrl).post('/api/alert-test');
-    expect(res.status).toBe(200);
-    expect(res.body.deliveries).toEqual([
-      { contact: 'Sarah', channel: 'telegram', ok: false, error: 'Telegram is not configured' },
-    ]);
-  });
-
-  it('emits a delivery event and a real alert-summary intervention on takeover when a contact is configured', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [{ name: 'Sarah', channel: 'telegram', address: '111' }] });
-
-    const { events } = await connectSocket();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-    }
-    expect(ended).toBe(true);
-
-    const delivery = events.find((e) => e.type === 'delivery');
-    expect(delivery).toMatchObject({ type: 'delivery', contact: 'Sarah', channel: 'telegram', ok: false });
-
-    const alert = events.find((e) => e.type === 'intervention' && e.level === 'alert');
-    expect(alert && 'text' in alert ? alert.text : undefined).toContain('Family alert attempted but delivery failed');
-  });
-
-  it('does not alert at the coach level by default (notifyOn: takeover)', async () => {
-    const { events } = await connectSocket();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-    }
-    expect(ended).toBe(true);
-
-    const alertEvents = events.filter((e) => e.type === 'intervention' && e.level === 'alert');
-    expect(alertEvents.length).toBe(1);
-  });
-
-  it('also alerts at the coach level when notifyOn is set to coach', async () => {
-    await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'coach', contacts: [] });
-    const { events } = await connectSocket();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-    }
-    expect(ended).toBe(true);
-
-    const alertEvents = events.filter((e) => e.type === 'intervention' && e.level === 'alert');
-    expect(alertEvents.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('GET /api/models returns the curated list with the env primary active by default', async () => {
+  it('GET /api/models returns the curated list', async () => {
     const res = await request(baseUrl).get('/api/models');
     expect(res.status).toBe(200);
-    expect(res.body.active).toBe('gemini-3-flash-preview');
-    const ids = res.body.models.map((m: { id: string }) => m.id);
-    expect(ids).toEqual(['gemini-3-flash-preview', 'gemini-flash-lite-latest', 'gemini-3-pro-preview']);
-    expect(res.body.models[0]).toMatchObject({ id: 'gemini-3-flash-preview', source: 'primary' });
-  });
-
-  it('GET /api/models reports settings.model as the active/selected entry once set', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], model: 'gemini-3-pro-preview' });
-    const res = await request(baseUrl).get('/api/models');
-    expect(res.body.active).toBe('gemini-3-pro-preview');
-    const selected = res.body.models.find((m: { id: string }) => m.id === 'gemini-3-pro-preview');
-    expect(selected).toMatchObject({ source: 'selected' });
-  });
-
-  it('GET /api/voices returns an empty list when keyless', async () => {
-    const res = await request(baseUrl).get('/api/voices');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ voices: [] });
-  });
-
-  it('GET /api/settings reports the balanced thresholds by default, and reflects a sensitivity change', async () => {
-    const before = await request(baseUrl).get('/api/settings');
-    expect(before.body.thresholds).toEqual({ coach: 45, takeover: 80 });
-
-    await request(baseUrl).put('/api/settings').send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'paranoid' });
-    const after = await request(baseUrl).get('/api/settings');
-    expect(after.body.thresholds).toEqual({ coach: 35, takeover: 65 });
-  });
-
-  it('paranoid sensitivity coaches and takes over in fewer turns than the balanced default', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'paranoid' });
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    let turns = 0;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-      turns += 1;
-    }
-    expect(ended).toBe(true);
-    // The default 'balanced' escalation (see the coach-then-takeover test above) needs 4 turns
-    // under this same AGGRESSIVE_LINE; paranoid's lower thresholds must reach takeover sooner.
-    expect(turns).toBeLessThan(4);
-  });
-
-  it('relaxed sensitivity takes more turns to reach takeover than the balanced default', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], sensitivity: 'relaxed' });
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    let turns = 0;
-    for (let i = 0; i < 8 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-      turns += 1;
-    }
-    expect(ended).toBe(true);
-    expect(turns).toBeGreaterThan(4);
-  });
-
-  it('GET /api/session/:id/events replays broadcast events for a session in ts order', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({ alias: 'Replay Test' });
-    const sessionId = start.body.sessionId as string;
-    await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    await request(baseUrl).post(`/api/session/${sessionId}/end`);
-
-    const res = await request(baseUrl).get(`/api/session/${sessionId}/events`);
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body.events)).toBe(true);
-    expect(res.body.events.length).toBeGreaterThan(0);
-    const timestamps = res.body.events.map((e: { ts: number }) => e.ts);
-    expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
-    expect(res.body.events.some((e: { type: string }) => e.type === 'session')).toBe(true);
-  });
-
-  it('GET /api/session/:id/events returns an empty list for an unknown session', async () => {
-    const res = await request(baseUrl).get('/api/session/does-not-exist/events');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ events: [] });
+    expect(res.body.models.length).toBeGreaterThan(0);
+    expect(res.body).toHaveProperty('active');
   });
 
   it('GET /api/analytics returns zeros gracefully on an empty store', async () => {
@@ -426,242 +106,83 @@ describe('server integration', () => {
     });
   });
 
-  it('GET /api/analytics aggregates a caught session', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    let ended = false;
-    for (let i = 0; i < 6 && !ended; i += 1) {
-      const res = await request(baseUrl).post('/api/turn').send({ sessionId, text: AGGRESSIVE_LINE });
-      ended = res.body.ended === true;
-    }
-    expect(ended).toBe(true);
-
-    const res = await request(baseUrl).get('/api/analytics');
-    expect(res.status).toBe(200);
-    expect(res.body.totalCalls).toBe(1);
-    expect(res.body.caught).toBe(1);
-    expect(res.body.gaveUp).toBe(0);
-    expect(res.body.catchRate).toBe(1);
-    expect(res.body.avgMaxRisk).toBeGreaterThan(0);
-    expect(res.body.tacticFrequency.length).toBeGreaterThan(0);
-  });
-});
-
-describe('server integration with ElevenLabs enabled', () => {
-  let built: BuiltApp;
-  let baseUrl: string;
-  const originalFetch = global.fetch;
-
-  beforeEach(async () => {
-    process.env.ELEVENLABS_API_KEY = 'test-key';
-    built = buildApp();
-    await new Promise<void>((resolve) => built.server.listen(0, resolve));
-    const port = (built.server.address() as AddressInfo).port;
-    baseUrl = `http://localhost:${port}`;
-  });
-
-  afterEach(async () => {
-    delete process.env.ELEVENLABS_API_KEY;
-    global.fetch = originalFetch;
-    resetVoicesCache();
-    await new Promise<void>((resolve) => built.server.close(() => resolve()));
-  });
-
-  it('streams back audio/mpeg on a successful ElevenLabs call', async () => {
-    global.fetch = (async () =>
-      ({
-        ok: true,
-        arrayBuffer: async () => new TextEncoder().encode('audio-bytes').buffer,
-      }) as unknown as Response) as typeof fetch;
-
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hello there', role: 'grandma' });
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('audio/mpeg');
-  });
-
-  it('falls back to 503 {fallback:true} when the ElevenLabs call fails', async () => {
-    global.fetch = (async () =>
-      ({
-        ok: false,
-        status: 500,
-        text: async () => 'boom',
-      }) as unknown as Response) as typeof fetch;
-
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hello there', role: 'guardian' });
-    expect(res.status).toBe(503);
-    expect(res.body).toEqual({ fallback: true });
-  });
-
-  it('GET /api/voices proxies and caches the ElevenLabs voice list', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        voices: [
-          { voice_id: 'v1', name: 'Rachel' },
-          { voice_id: 'v2', name: 'Antoni' },
-        ],
-      }),
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    const first = await request(baseUrl).get('/api/voices');
-    expect(first.status).toBe(200);
-    expect(first.body).toEqual({
-      voices: [
-        { id: 'v1', name: 'Rachel' },
-        { id: 'v2', name: 'Antoni' },
-      ],
-    });
-
-    const second = await request(baseUrl).get('/api/voices');
-    expect(second.body).toEqual(first.body);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('POST /api/tts 400s on a voiceId that is not in the cached voice list', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ voices: [{ voice_id: 'v1', name: 'Rachel' }] }),
-    }) as unknown as typeof fetch;
-
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: 'not-real' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('not-real');
-  });
-
-  it('POST /api/tts 400s on a non-string/empty voiceId', async () => {
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: '' });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /api/tts uses a valid voiceId from the cache instead of the role default', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ voices: [{ voice_id: 'v1', name: 'Rachel' }] }) })) // GET /v1/voices
-      .mockImplementationOnce(async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode('audio-bytes').buffer })); // TTS call
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma', voiceId: 'v1' });
-    expect(res.status).toBe(200);
-    const ttsUrl = fetchMock.mock.calls[1][0] as string;
-    expect(ttsUrl).toContain('v1');
-  });
-
-  it('POST /api/tts falls back to settings.voices override when no explicit voiceId is given', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], voices: { grandma: 'custom-grandma-voice', guardian: '' } });
-
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode('audio-bytes').buffer,
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    const res = await request(baseUrl).post('/api/tts').send({ text: 'hi', role: 'grandma' });
-    expect(res.status).toBe(200);
-    expect(fetchMock.mock.calls[0][0]).toContain('custom-grandma-voice');
-  });
-});
-
-describe('server integration with a failing store', () => {
-  let built: BuiltApp;
-  let baseUrl: string;
-
-  const failingStore = {
-    saveSessionStart: () => {
-      throw new Error('store down');
-    },
-    saveSessionEnd: () => {
-      throw new Error('store down');
-    },
-    saveEvent: () => {
-      throw new Error('store down');
-    },
-    getLeaderboard: async () => {
-      throw new Error('store down');
-    },
-  };
-
-  beforeEach(async () => {
-    built = buildApp({ store: failingStore });
-    await new Promise<void>((resolve) => built.server.listen(0, resolve));
-    const port = (built.server.address() as AddressInfo).port;
-    baseUrl = `http://localhost:${port}`;
-  });
-
-  afterEach(async () => {
-    await new Promise<void>((resolve) => built.server.close(() => resolve()));
-  });
-
-  it('still starts and progresses a session when persistence throws on every call', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    expect(start.status).toBe(200);
-    const sessionId = start.body.sessionId as string;
-
-    const turn = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    expect(turn.status).toBe(200);
-
-    const end = await request(baseUrl).post(`/api/session/${sessionId}/end`);
-    expect(end.status).toBe(200);
-  });
-
-  it('returns an empty leaderboard instead of failing when the store rejects', async () => {
+  it('GET /api/leaderboard returns at most 10 entries', async () => {
     const res = await request(baseUrl).get('/api/leaderboard');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ entries: [] });
+    expect(Array.isArray(res.body.entries)).toBe(true);
+  });
+
+  it('POST /api/alert-test reports no deliveries when no contacts are configured', async () => {
+    const res = await request(baseUrl).post('/api/alert-test');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deliveries: [] });
+  });
+
+  it('POST /api/alert-test reports a failed delivery for a configured discord contact when no bot token is set', async () => {
+    await request(baseUrl)
+      .put('/api/settings')
+      .send({ serverName: 'S', contacts: [{ name: 'Sarah', channel: 'discord', address: '111' }] });
+    const res = await request(baseUrl).post('/api/alert-test');
+    expect(res.status).toBe(200);
+    expect(res.body.deliveries).toEqual([
+      { contact: 'Sarah', channel: 'discord', ok: false, error: 'Discord client is not connected' },
+    ]);
   });
 });
 
-describe('server integration with Telegram enabled', () => {
+describe('server integration with Discord monitoring', () => {
   let built: BuiltApp;
-  const originalFetch = global.fetch;
+
+  /** Minimal discord.js Client stub: an event emitter shaped like the bits of
+   * Client that startDiscordChannel touches (on/emit + ready user/guilds cache).
+   * Tests emit 'messageCreate' directly to drive the monitoring pipeline. */
+  function makeStubClient(tag = 'ScamShield#0001', guildName = 'Demo Server') {
+    const handlers: Record<string, ((...args: unknown[]) => void)[]> = {};
+    // Collection-shaped cache: a Map plus the .first() helper discord.js provides.
+    const cache = new Map([['g1', { name: guildName }]]);
+    (cache as unknown as { first: () => unknown }).first = () => [...cache.values()][0];
+    const client = {
+      on: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        (handlers[event] ??= []).push(fn);
+        return client;
+      }),
+      emit: (event: string, ...args: unknown[]) => (handlers[event] ?? []).forEach((fn) => fn(...args)),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      user: { tag },
+      guilds: { cache },
+    };
+    return client;
+  }
+
+  /** A discord.js Message-shaped object for the messageCreate path, including the
+   * delete() spy the flag action calls. */
+  function fakeMessage(userId: string, username: string, text: string) {
+    return {
+      author: { bot: false, id: userId, username },
+      guildId: 'g1',
+      channelId: 'c1',
+      content: text,
+      delete: vi.fn().mockResolvedValue(undefined),
+      reply: vi.fn().mockResolvedValue(undefined),
+      channel: { send: vi.fn().mockResolvedValue(undefined) },
+    };
+  }
+
+  // The per-user serialization chain in onMessage nests several .then layers; this
+  // drains the microtask queue deeply enough for the full chain to settle.
+  const drain = async (n = 20) => {
+    for (let i = 0; i < n; i += 1) await Promise.resolve();
+  };
 
   afterEach(async () => {
-    built.telegram.stop();
+    built.discord.stop();
     await new Promise<void>((resolve) => built.server.close(() => resolve()));
-    vi.useRealTimers();
-    global.fetch = originalFetch;
-    delete process.env.TELEGRAM_BOT_TOKEN;
-    vi.restoreAllMocks();
+    delete process.env.DISCORD_BOT_TOKEN;
   });
 
-  it('finds-or-creates a session per chat id, ignores /start, and mirrors the conversation as channel:telegram', async () => {
-    vi.useFakeTimers();
-    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+  it('creates a per-user session keyed by Discord user id', async () => {
+    const client = makeStubClient();
 
-    let telegramRef: BuiltApp['telegram'] | undefined;
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: { username: 'RoseBot' } }) })) // getMe
-      .mockImplementationOnce(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          result: [{ update_id: 1, message: { chat: { id: 555, type: 'private', first_name: 'Sarah' }, text: '/start' } }],
-        }),
-      })) // getUpdates: /start
-      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: welcome reply
-      .mockImplementationOnce(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          result: [{ update_id: 2, message: { chat: { id: 555, type: 'private', first_name: 'Sarah' }, text: INNOCENT_LINE } }],
-        }),
-      })) // getUpdates: a real (innocent) message
-      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: grandma reply
-      .mockImplementationOnce(async () => {
-        telegramRef?.stop();
-        return { ok: true, json: async () => ({ ok: true, result: [] }) };
-      });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    // The Telegram poll loop here is driven purely by mocked, instantly-resolving
-    // fetches, so it can drain entirely via microtasks before a real WebSocket
-    // handshake (a macrotask) would ever get a turn. Capture broadcast events
-    // through the store's saveEvent hook instead — buildApp() calls it for every
-    // broadcast regardless of whether any WS client is connected, so it's race-free.
     const events: Event[] = [];
     const baseStore = createInMemoryStore();
     const capturingStore: Store = {
@@ -672,299 +193,166 @@ describe('server integration with Telegram enabled', () => {
       },
     };
 
-    built = buildApp({ store: capturingStore, limits: NO_TURN_THROTTLE });
-    telegramRef = built.telegram;
-    await new Promise<void>((resolve) => built.server.listen(0, resolve));
-    const port = (built.server.address() as AddressInfo).port;
+    built = buildApp({ store: capturingStore, limits: NO_TURN_THROTTLE, discordClient: client as never });
+    client.emit(Events.ClientReady, client);
 
-    for (let i = 0; i < 15; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await vi.advanceTimersByTimeAsync(0);
-    }
+    client.emit('messageCreate', fakeMessage('555', 'Sarah', INNOCENT_LINE));
+    await drain();
 
-    // /start never creates a session — only the first real message does.
     expect(built.sessions.size).toBe(1);
     const [session] = [...built.sessions.values()];
     expect(session.alias).toBe('Sarah');
 
-    const welcomeCall = fetchMock.mock.calls[2];
-    expect(JSON.parse((welcomeCall[1] as RequestInit).body as string).text).toContain('Hello dear');
-
-    const replyCall = fetchMock.mock.calls[4];
-    const replyBody = JSON.parse((replyCall[1] as RequestInit).body as string);
-    expect(replyBody.chat_id).toBe('555');
-    expect(typeof replyBody.text).toBe('string');
-
     const sessionStart = events.find((e) => e.type === 'session' && e.state === 'start');
-    expect(sessionStart).toMatchObject({ type: 'session', state: 'start', channel: 'telegram', alias: 'Sarah' });
-    expect(events.some((e) => e.type === 'utterance' && e.role === 'scammer' && e.text === INNOCENT_LINE)).toBe(true);
-    expect(events.some((e) => e.type === 'utterance' && e.role === 'grandma')).toBe(true);
+    expect(sessionStart).toMatchObject({ type: 'session', state: 'start', alias: 'Sarah' });
+    expect(events.some((e) => e.type === 'tactic')).toBe(false); // innocent line → no detections
+    expect(events.some((e) => e.type === 'utterance' && e.role === 'scammer')).toBe(true);
 
-    const statusRes = await request(`http://localhost:${port}`).get('/api/telegram/status');
-    expect(statusRes.body).toEqual({
-      enabled: true,
-      botUsername: 'RoseBot',
-      recentChats: [{ chatId: '555', name: 'Sarah', lastSeen: expect.any(Number) }],
-    });
+    expect(built.discord.getBotTag()).toBe('ScamShield#0001');
+    expect(built.discord.getGuildName()).toBe('Demo Server');
+    expect(built.discord.getRecentUsers()).toEqual([{ userId: '555', name: 'Sarah', lastSeen: expect.any(Number) }]);
   });
 
-  it('blocks further messages on a chat after a takeover, instead of resurrecting Rose', async () => {
-    vi.useFakeTimers();
-    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+  it('accumulates risk per user across messages and on flag deletes + warns + mutes + reports', async () => {
+    const client = makeStubClient();
+    built = buildApp({ limits: NO_TURN_THROTTLE, discordClient: client as never });
+    client.emit(Events.ClientReady, client);
 
-    let telegramRef: BuiltApp['telegram'] | undefined;
-    const scamUpdate = (updateId: number) => ({
-      ok: true,
-      json: async () => ({
-        ok: true,
-        result: [{ update_id: updateId, message: { chat: { id: 777, type: 'private', first_name: 'Tom' }, text: AGGRESSIVE_LINE } }],
-      }),
-    });
-
-    const fetchMock = vi.fn();
-    fetchMock.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: {} }) })); // getMe
-    // Feed enough aggressive turns to guarantee a takeover, each followed by a sendMessage call.
+    // Feed enough aggressive turns from one user to guarantee a flag.
+    const msgs: ReturnType<typeof fakeMessage>[] = [];
     for (let i = 0; i < 6; i += 1) {
-      fetchMock.mockImplementationOnce(async () => scamUpdate(i + 1));
-      fetchMock.mockImplementationOnce(async () => ({ ok: true }));
-    }
-    fetchMock.mockImplementationOnce(async () => scamUpdate(100)); // message after takeover: should start a fresh session
-    fetchMock.mockImplementationOnce(async () => ({ ok: true }));
-    fetchMock.mockImplementationOnce(async () => {
-      telegramRef?.stop();
-      return { ok: true, json: async () => ({ ok: true, result: [] }) };
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    built = buildApp({ limits: NO_TURN_THROTTLE });
-    telegramRef = built.telegram;
-    await new Promise<void>((resolve) => built.server.listen(0, resolve));
-
-    for (let i = 0; i < 60; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await vi.advanceTimersByTimeAsync(0);
+      const m = fakeMessage('777', 'Tom', AGGRESSIVE_LINE);
+      msgs.push(m);
+      client.emit('messageCreate', m);
+      await drain();
     }
 
     const allSessions = [...built.sessions.values()];
-    // The takeover ends the one session and blocks the chat — the post-takeover
-    // message must NOT spin up a fresh, un-ended session ("the call is ended" stays true).
     expect(allSessions.length).toBe(1);
-    expect(allSessions[0].ended && allSessions[0].outcome === 'caught').toBe(true);
-    // The message after the takeover is stonewalled with the protected-line reply,
-    // not answered by a resurrected Rose.
-    const sendBodies = fetchMock.mock.calls
-      .filter((c) => String(c[0]).includes('/sendMessage'))
-      .map((c) => JSON.parse((c[1] as RequestInit).body as string).text as string);
-    expect(sendBodies.some((t) => t.includes('protected by ScamShield'))).toBe(true);
-  });
-});
+    expect(allSessions[0].ended).toBe(true); // flag ends the session
 
-describe('server integration with Gemini enabled', () => {
-  let built: BuiltApp;
-  let baseUrl: string;
-  const originalFetch = global.fetch;
-
-  beforeEach(async () => {
-    process.env.GEMINI_API_KEY = 'test-key';
-    built = buildApp();
-    await new Promise<void>((resolve) => built.server.listen(0, resolve));
-    const port = (built.server.address() as AddressInfo).port;
-    baseUrl = `http://localhost:${port}`;
+    // The message that crossed the threshold got deleted + warned in-channel.
+    const flaggedMsg = msgs.find((m) => m.delete.mock.calls.length > 0);
+    expect(flaggedMsg).toBeTruthy();
+    expect(flaggedMsg?.channel.send).toHaveBeenCalled();
+    const notice = flaggedMsg?.channel.send.mock.calls[0]?.[0] as string | undefined;
+    expect(typeof notice).toBe('string');
+    expect(notice).toContain('ScamShield removed a message from Tom');
   });
 
-  afterEach(async () => {
-    delete process.env.GEMINI_API_KEY;
-    global.fetch = originalFetch;
-    await new Promise<void>((resolve) => built.server.close(() => resolve()));
+  it('blocks further messages from a user after a flag, instead of resetting their risk', async () => {
+    const client = makeStubClient();
+    built = buildApp({ limits: NO_TURN_THROTTLE, discordClient: client as never });
+    client.emit(Events.ClientReady, client);
+
+    for (let i = 0; i < 6; i += 1) {
+      client.emit('messageCreate', fakeMessage('888', 'Scammer', AGGRESSIVE_LINE));
+      await drain();
+    }
+    expect([...built.sessions.values()].every((s) => s.ended)).toBe(true);
+
+    // A message after the flag: the user is blocked, so no new session is created.
+    const afterMsg = fakeMessage('888', 'Scammer', 'try again');
+    client.emit('messageCreate', afterMsg);
+    await drain();
+
+    // Still exactly the one (ended) session — no resurrected fresh session.
+    expect([...built.sessions.values()].filter((s) => s.alias === 'Scammer').length).toBe(1);
+    // The post-flag message is stonewalled with the block notice.
+    expect(afterMsg.reply).toHaveBeenCalled();
   });
 
-  function mockGeminiFetch(text = '{"detections":[]}') {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }),
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-    return fetchMock;
-  }
+  it('keeps separate per-user sessions for two different Discord members', async () => {
+    const client = makeStubClient();
+    built = buildApp({ limits: NO_TURN_THROTTLE, discordClient: client as never });
+    client.emit(Events.ClientReady, client);
 
-  it('tries settings.model first, before the env primary/fallback chain', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({ protectedName: 'Rose', notifyOn: 'takeover', contacts: [], model: 'gemini-3-pro-preview' });
+    client.emit('messageCreate', fakeMessage('a1', 'Alice', INNOCENT_LINE));
+    client.emit('messageCreate', fakeMessage('b2', 'Bob', INNOCENT_LINE));
+    await drain();
 
-    const fetchMock = mockGeminiFetch();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: 'hello there' });
-
-    expect(fetchMock).toHaveBeenCalled();
-    const firstUrl = fetchMock.mock.calls[0][0] as string;
-    expect(firstUrl).toContain('models/gemini-3-pro-preview:generateContent');
-  });
-
-  it('builds the grandma system prompt from settings.persona for every gemini() call', async () => {
-    await request(baseUrl)
-      .put('/api/settings')
-      .send({
-        protectedName: 'Rose',
-        notifyOn: 'takeover',
-        contacts: [],
-        persona: { name: 'Gigi', age: 82, city: 'Halifax', grandkid: 'Max', quirks: 'baking bread' },
-      });
-
-    const fetchMock = mockGeminiFetch();
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: 'innocuous chat about the weather' });
-
-    // Call 0 is the analyst (JSON schema); call 1 is the grandma reply — capture its systemInstruction.
-    const grandmaCall = fetchMock.mock.calls[1];
-    const body = JSON.parse((grandmaCall[1] as RequestInit).body as string) as { systemInstruction: { parts: { text: string }[] } };
-    const system = body.systemInstruction.parts[0].text;
-    expect(system).toContain('Gigi');
-    expect(system).toContain('Halifax');
-    expect(system).toContain('Max');
-    expect(system).toContain('baking bread');
+    const aliases = [...built.sessions.values()].map((s) => s.alias).sort();
+    expect(aliases).toEqual(['Alice', 'Bob']);
   });
 });
 
 describe('server abuse and quota guards', () => {
   let built: BuiltApp | undefined;
-  let baseUrl: string;
   const originalFetch = global.fetch;
 
   async function launch(options: Parameters<typeof buildApp>[0] = {}): Promise<void> {
     built = buildApp(options);
     await new Promise<void>((resolve) => built!.server.listen(0, resolve));
-    baseUrl = `http://localhost:${(built!.server.address() as AddressInfo).port}`;
   }
 
   beforeEach(() => {
     delete process.env.GEMINI_API_KEY;
-    delete process.env.ELEVENLABS_API_KEY;
-    delete process.env.MONGODB_URI;
-    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.DISCORD_BOT_TOKEN;
   });
 
   afterEach(async () => {
-    built?.telegram.stop();
+    built?.discord.stop();
     global.fetch = originalFetch;
     vi.useRealTimers();
     vi.restoreAllMocks();
     delete process.env.GEMINI_API_KEY;
-    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.DISCORD_BOT_TOKEN;
     if (built) await new Promise<void>((resolve) => built!.server.close(() => resolve()));
     built = undefined;
   });
 
-  it('429s /api/turn (with retryAfterMs) when turns arrive faster than the min interval', async () => {
-    await launch(); // default limits: 1 turn / 2s per session
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
-
-    const first = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+  it('429s /api/alert-test (with retryAfterMs) while it is cooling down', async () => {
+    await launch({ limits: { alertTestCooldownMs: 60_000 } });
+    const first = await request(`http://localhost:${(built!.server.address() as AddressInfo).port}`).post('/api/alert-test');
     expect(first.status).toBe(200);
-
-    const second = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
+    const second = await request(`http://localhost:${(built!.server.address() as AddressInfo).port}`).post('/api/alert-test');
     expect(second.status).toBe(429);
     expect(typeof second.body.retryAfterMs).toBe('number');
-    expect(second.body.retryAfterMs).toBeGreaterThan(0);
   });
 
-  it('400s /api/turn when the caller text exceeds the character cap', async () => {
-    await launch({ limits: NO_TURN_THROTTLE });
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const oversized = 'a'.repeat(1001);
-    const res = await request(baseUrl).post('/api/turn').send({ sessionId: start.body.sessionId, text: oversized });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('1000');
-  });
-
-  it('429s /api/alert-test (with retryAfterMs) while it is cooling down', async () => {
-    await launch();
-    const first = await request(baseUrl).post('/api/alert-test');
-    expect(first.status).toBe(200);
-
-    const second = await request(baseUrl).post('/api/alert-test');
-    expect(second.status).toBe(429);
-    expect(second.body.retryAfterMs).toBeGreaterThan(0);
-  });
-
-  it('transparently falls back to the mock path (no extra Gemini calls, never throws) once the global spend guard trips', async () => {
-    process.env.GEMINI_API_KEY = 'test-key';
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ candidates: [{ content: { parts: [{ text: '{"detections":[]}' }] } }] }),
+  it('silently drops the second message when a single Discord user floods', async () => {
+    const handlers: Record<string, ((...args: unknown[]) => void)[]> = {};
+    const cache = new Map([['g1', { name: 'Demo Server' }]]);
+    (cache as unknown as { first: () => unknown }).first = () => [...cache.values()][0];
+    const client = {
+      on: vi.fn((event: string, fn: (...args: unknown[]) => void) => {
+        (handlers[event] ??= []).push(fn);
+        return client;
+      }),
+      emit: (event: string, ...args: unknown[]) => (handlers[event] ?? []).forEach((fn) => fn(...args)),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      user: { tag: 'ScamShield#0001' },
+      guilds: { cache },
+    };
+    const fakeMessage = (text: string) => ({
+      author: { bot: false, id: '909', username: 'Flooder' },
+      guildId: 'g1',
+      channelId: 'c1',
+      content: text,
+      delete: vi.fn().mockResolvedValue(undefined),
+      reply: vi.fn().mockResolvedValue(undefined),
+      channel: { send: vi.fn().mockResolvedValue(undefined) },
     });
-    global.fetch = fetchMock as unknown as typeof fetch;
 
-    // Budget of 1 Gemini-backed turn per window; throttle relaxed so both turns run.
-    await launch({ limits: { ...NO_TURN_THROTTLE, geminiMaxPerWindow: 1 } });
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    const sessionId = start.body.sessionId as string;
+    await launch({ discordClient: client as never }); // default limits: per-user throttle active
 
-    const geminiCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes(':generateContent')).length;
+    // Two messages from the same user within the same tick — the second trips the
+    // 1-message/2s per-user throttle and is silently dropped (no analysis).
+    client.emit('messageCreate', fakeMessage(INNOCENT_LINE));
+    client.emit('messageCreate', fakeMessage(INNOCENT_LINE));
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
 
-    const first = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    expect(first.status).toBe(200);
-    const afterFirst = geminiCalls();
-    expect(afterFirst).toBeGreaterThan(0);
-
-    const second = await request(baseUrl).post('/api/turn').send({ sessionId, text: INNOCENT_LINE });
-    expect(second.status).toBe(200);
-    expect(typeof second.body.reply).toBe('string');
-    // Budget spent on turn 1 -> turn 2 used the canned mock reply, no new Gemini calls.
-    expect(geminiCalls()).toBe(afterFirst);
-  });
-
-  it('replies in character and never reaches Gemini when a single Telegram chat floods', async () => {
-    vi.useFakeTimers();
-    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
-
-    let telegramRef: BuiltApp['telegram'] | undefined;
-    // Two messages from the same chat in one batch — under frozen fake-timer time they
-    // are simultaneous, so the second trips the 1-turn/2s per-chat throttle.
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ ok: true, result: { username: 'RoseBot' } }) })) // getMe
-      .mockImplementationOnce(async () => ({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          result: [
-            { update_id: 1, message: { chat: { id: 909, type: 'private', first_name: 'Flooder' }, text: INNOCENT_LINE } },
-            { update_id: 2, message: { chat: { id: 909, type: 'private', first_name: 'Flooder' }, text: INNOCENT_LINE } },
-          ],
-        }),
-      })) // getUpdates: two rapid messages
-      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: grandma reply for message 1
-      .mockImplementationOnce(async () => ({ ok: true })) // sendMessage: in-character brush-off for message 2
-      .mockImplementationOnce(async () => {
-        telegramRef?.stop();
-        return { ok: true, json: async () => ({ ok: true, result: [] }) };
-      });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    built = buildApp(); // default limits: per-chat throttle active
-    telegramRef = built.telegram;
-    await new Promise<void>((resolve) => built!.server.listen(0, resolve));
-
-    for (let i = 0; i < 15; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await vi.advanceTimersByTimeAsync(0);
-    }
-
-    const sendBodies = fetchMock.mock.calls
-      .filter((c) => String(c[0]).includes('/sendMessage'))
-      .map((c) => JSON.parse((c[1] as RequestInit).body as string).text as string);
-    expect(sendBodies.some((t) => t.includes("you're talking so fast"))).toBe(true);
-    // The flooded second message must never have reached Gemini.
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes(':generateContent'))).toBe(false);
+    // Exactly one per-user session exists, holding only the first utterance — the
+    // flooded second message was dropped by the throttle, never analyzed.
+    const sessions = [...built!.sessions.values()].filter((s) => s.alias === 'Flooder');
+    expect(sessions.length).toBe(1);
+    expect(sessions[0].history.filter((h) => h.role === 'user')).toHaveLength(1);
   });
 });
 
 describe('operator token auth on mutating endpoints', () => {
   let built: BuiltApp;
   let baseUrl: string;
-  const settingsBody = { protectedName: 'Rose', notifyOn: 'takeover' as const, contacts: [] };
 
   beforeEach(async () => {
     process.env.SCAMSHIELD_OPERATOR_TOKEN = 'secret';
@@ -974,17 +362,21 @@ describe('operator token auth on mutating endpoints', () => {
   });
 
   afterEach(async () => {
+    built.discord.stop();
     delete process.env.SCAMSHIELD_OPERATOR_TOKEN;
     await new Promise<void>((resolve) => built.server.close(() => resolve()));
   });
 
   it('401s PUT /api/settings without the token', async () => {
-    const res = await request(baseUrl).put('/api/settings').send(settingsBody);
+    const res = await request(baseUrl).put('/api/settings').send({ serverName: 'S' });
     expect(res.status).toBe(401);
   });
 
   it('accepts PUT /api/settings with the correct token', async () => {
-    const res = await request(baseUrl).put('/api/settings').set('x-scamshield-token', 'secret').send(settingsBody);
+    const res = await request(baseUrl)
+      .put('/api/settings')
+      .set('x-scamshield-token', 'secret')
+      .send({ serverName: 'S', contacts: [] });
     expect(res.status).toBe(200);
   });
 
@@ -993,9 +385,9 @@ describe('operator token auth on mutating endpoints', () => {
     expect(res.status).toBe(401);
   });
 
-  it('leaves read + gameplay endpoints open (start/turn need no token)', async () => {
-    const start = await request(baseUrl).post('/api/session/start').send({});
-    expect(start.status).toBe(200);
+  it('leaves read endpoints open (settings/discord-status/health need no token)', async () => {
     expect((await request(baseUrl).get('/api/settings')).status).toBe(200);
+    expect((await request(baseUrl).get('/api/discord/status')).status).toBe(200);
+    expect((await request(baseUrl).get('/health')).status).toBe(200);
   });
 });

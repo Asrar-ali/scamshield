@@ -12,20 +12,20 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** Turn index a takeover landed on, inferred from the risk trace (one risk
- * sample per scammer turn, excluding the synthetic baseline at t=0). */
-function takeoverTurn(data: AutopsyData): number | null {
-  const takeover = data.interventions.find((i) => i.level === 'takeover');
-  if (!takeover) return null;
-  const turn = data.riskSamples.filter((s) => s.ts > data.startTs && s.ts <= takeover.ts).length;
+/** Message index a flag landed on, inferred from the risk trace (one risk
+ * sample per analyzed message, excluding the synthetic baseline at t=0). */
+function flagTurn(data: AutopsyData): number | null {
+  const flag = data.interventions.find((i) => i.level === 'flag');
+  if (!flag) return null;
+  const turn = data.riskSamples.filter((s) => s.ts > data.startTs && s.ts <= flag.ts).length;
   return turn > 0 ? turn : null;
 }
 
 function closingLine(data: AutopsyData): string {
   if (data.outcome === 'caught') {
-    const turn = takeoverTurn(data);
-    if (turn && data.turns) return `Guardian intervened at turn ${turn} of ${data.turns}.`;
-    return `Guardian seized the call at peak risk ${Math.round(data.peakRisk)}.`;
+    const turn = flagTurn(data);
+    if (turn && data.turns) return `ScamShield flagged the user at message ${turn} of ${data.turns}.`;
+    return `User flagged at peak risk ${Math.round(data.peakRisk)}.`;
   }
   const turns = `${data.turns} ${data.turns === 1 ? 'turn' : 'turns'}`;
   return `Caller gave up after ${turns} — peak risk ${Math.round(data.peakRisk)}.`;

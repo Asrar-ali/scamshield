@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Contact, NotifyOn, Persona, Sensitivity, Settings, TelegramStatus, TtsRole } from '../lib/api';
+import type { Contact, DiscordStatus, Sensitivity, Settings } from '../lib/api';
 import { fetchSettings, updateSettings } from '../lib/api';
-import { ProtectionTab } from './settings/ProtectionTab';
 import { AITab } from './settings/AITab';
 import { AlertsTab } from './settings/AlertsTab';
+import { SensitivityControl } from './settings/SensitivityControl';
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings/defaults';
 import { CheckIcon } from './icons';
 
@@ -15,10 +15,9 @@ const REDUCED_MOTION =
     : false;
 const CLOSE_ANIMATION_MS = REDUCED_MOTION ? 0 : 260;
 
-type TabId = 'protection' | 'ai' | 'alerts';
+type TabId = 'detection' | 'alerts';
 const TABS: { id: TabId; label: string }[] = [
-  { id: 'protection', label: 'Protection' },
-  { id: 'ai', label: 'AI' },
+  { id: 'detection', label: 'Detection' },
   { id: 'alerts', label: 'Alerts' },
 ];
 
@@ -26,21 +25,18 @@ interface SettingsDrawerProps {
   open: boolean;
   onClose: () => void;
   initialSettings: Settings | null;
-  telegramStatus: TelegramStatus;
+  discordStatus: DiscordStatus;
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
-/** Right-side slide-over drawer. Stays mounted briefly after `open` goes false
- * so the CSS close transition can play, then unmounts — the animation itself
- * is pure CSS (transform/opacity transitions), this timer only controls when
- * the DOM node is removed. Three tabs (Protection / AI / Alerts) share one
+/** Right-side slide-over drawer. Two tabs (Detection / Alerts) share one
  * debounced-save pipeline against PUT /api/settings. */
-export function SettingsDrawer({ open, onClose, initialSettings, telegramStatus }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onClose, initialSettings, discordStatus }: SettingsDrawerProps) {
   const [mounted, setMounted] = useState(open);
   const [settings, setSettings] = useState<Settings>(normalizeSettings(initialSettings, DEFAULT_SETTINGS));
   const [saveState, setSaveState] = useState<SaveState>('idle');
-  const [tab, setTab] = useState<TabId>('protection');
+  const [tab, setTab] = useState<TabId>('detection');
   const seeded = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,43 +84,30 @@ export function SettingsDrawer({ open, onClose, initialSettings, telegramStatus 
       void (async () => {
         const result = await updateSettings(next);
         if (result) {
-          // Merge over `next` (not the shipped default) so fields the server doesn't yet
-          // echo back — model/voices/sensitivity/persona while that contract lands — aren't
-          // wiped out on every save.
           setSettings(normalizeSettings(result, next));
           setSaveState('saved');
           if (tickTimer.current) clearTimeout(tickTimer.current);
           tickTimer.current = setTimeout(() => setSaveState('idle'), SAVED_TICK_MS);
           if (afterSave) afterSave();
         } else {
-          // Server unreachable / feature not live yet — keep the optimistic
-          // local value, just surface that it wasn't persisted.
           setSaveState('error');
         }
       })();
     }, SAVE_DEBOUNCE_MS);
   };
 
-  const onPersonaChange = (persona: Persona) => {
-    // The persona's name IS the protected person's name — keep protectedName (used
-    // server-side for alerts) in sync instead of showing a second, redundant field.
-    persist({ ...settings, persona, protectedName: persona.name.trim() || settings.protectedName });
-  };
-
   const onSensitivityChange = (sensitivity: Sensitivity) => {
-    // The PUT response doesn't echo `thresholds` back (it's read-only/server-computed), so
-    // follow up with a plain GET to pick up the real cutoffs for the newly active level.
+    // The PUT response doesn't echo `thresholds` (it's read-only/server-computed), so
+    // follow up with a plain GET to pick up the real flag cutoff for the new level.
     persist({ ...settings, sensitivity }, () => {
       void fetchSettings().then((fresh) => {
-        if (fresh && typeof fresh.thresholds?.coach === 'number' && typeof fresh.thresholds?.takeover === 'number') {
+        if (fresh && typeof fresh.thresholds?.flag === 'number') {
           setSettings((prev) => ({ ...prev, thresholds: fresh.thresholds }));
         }
       });
     });
   };
   const onModelChange = (model: string) => persist({ ...settings, model });
-  const onVoiceChange = (role: TtsRole, voiceId: string) => persist({ ...settings, voices: { ...settings.voices, [role]: voiceId } });
-  const onNotifyOnChange = (notifyOn: NotifyOn) => persist({ ...settings, notifyOn });
   const onContactsChange = (contacts: Contact[]) => persist({ ...settings, contacts });
 
   const onTabKeyDown = (e: React.KeyboardEvent) => {
@@ -184,21 +167,12 @@ export function SettingsDrawer({ open, onClose, initialSettings, telegramStatus 
           <div
             className="settings-tab-panel"
             role="tabpanel"
-            id="settings-panel-protection"
-            aria-labelledby="settings-tab-protection"
-            hidden={tab !== 'protection'}
+            id="settings-panel-detection"
+            aria-labelledby="settings-tab-detection"
+            hidden={tab !== 'detection'}
           >
-            <ProtectionTab settings={settings} onPersonaChange={onPersonaChange} onSensitivityChange={onSensitivityChange} />
-          </div>
-
-          <div
-            className="settings-tab-panel"
-            role="tabpanel"
-            id="settings-panel-ai"
-            aria-labelledby="settings-tab-ai"
-            hidden={tab !== 'ai'}
-          >
-            <AITab settings={settings} onModelChange={onModelChange} onVoiceChange={onVoiceChange} />
+            <SensitivityControl sensitivity={settings.sensitivity} thresholds={settings.thresholds} onChange={onSensitivityChange} />
+            <AITab settings={settings} onModelChange={onModelChange} />
           </div>
 
           <div
@@ -208,12 +182,7 @@ export function SettingsDrawer({ open, onClose, initialSettings, telegramStatus 
             aria-labelledby="settings-tab-alerts"
             hidden={tab !== 'alerts'}
           >
-            <AlertsTab
-              settings={settings}
-              telegramStatus={telegramStatus}
-              onNotifyOnChange={onNotifyOnChange}
-              onContactsChange={onContactsChange}
-            />
+            <AlertsTab settings={settings} discordStatus={discordStatus} onContactsChange={onContactsChange} />
           </div>
         </div>
       </aside>

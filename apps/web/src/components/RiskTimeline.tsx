@@ -6,7 +6,7 @@ interface RiskTimelineProps {
   samples: RiskSample[];
   markers: TacticMarker[];
   interventions: InterventionMoment[];
-  thresholds: { coach: number; takeover: number };
+  thresholds: { flag: number };
   startTs: number;
   endTs: number;
   /** 'spark' = compact under-gauge trace; 'full' = labelled forensic version. */
@@ -76,20 +76,20 @@ export function RiskTimeline({ samples, markers, interventions, thresholds, star
           </linearGradient>
         </defs>
 
-        {/* threshold guides */}
-        {(['coach', 'takeover'] as const).map((key) => {
-          const y = yForScore(thresholds[key]).toFixed(1);
+        {/* threshold guide */}
+        {(() => {
+          const y = yForScore(thresholds.flag).toFixed(1);
           return (
-            <g key={key}>
-              <line x1={g.padL} y1={y} x2={g.w - g.padR} y2={y} className={`rt-guide rt-guide-${key}`} />
+            <g>
+              <line x1={g.padL} y1={y} x2={g.w - g.padR} y2={y} className="rt-guide rt-guide-flag" />
               {variant === 'full' && (
-                <text x={g.w - g.padR} y={Number(y) - 3} className={`rt-guide-label rt-guide-label-${key}`} textAnchor="end">
-                  {key === 'coach' ? 'Coach' : 'Takeover'} {thresholds[key]}
+                <text x={g.w - g.padR} y={Number(y) - 3} className="rt-guide-label rt-guide-label-flag" textAnchor="end">
+                  Flag {thresholds.flag}
                 </text>
               )}
             </g>
           );
-        })}
+        })()}
 
         {/* intervention moments */}
         {interventions.map((iv, i) => {
@@ -99,7 +99,7 @@ export function RiskTimeline({ samples, markers, interventions, thresholds, star
               <line x1={x} y1={g.padT} x2={x} y2={g.padT + plotH} className={`rt-mark rt-mark-${iv.level}`} />
               {variant === 'full' && (
                 <text x={Number(x)} y={g.padT - 4} className={`rt-mark-label rt-mark-label-${iv.level}`} textAnchor="middle">
-                  {iv.level === 'coach' ? 'Coach' : 'Takeover'}
+                  Flag
                 </text>
               )}
             </g>

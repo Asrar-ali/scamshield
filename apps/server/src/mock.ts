@@ -1,6 +1,6 @@
 import type { Detection, TacticId } from './types.js';
 
-// Keyword fallback so the whole loop runs offline / keyless. The real analyst is Gemini.
+// Keyword fallback so the bot runs offline / keyless. The real analyst is Gemini.
 const PATTERNS: { tactic: TacticId; re: RegExp }[] = [
   { tactic: 'urgency_pressure', re: /\b(right now|immediately|urgent|hurry|today only|before (midnight|tonight)|act fast|running out of time)\b/i },
   { tactic: 'authority_impersonation', re: /\b(irs|cra|revenue agency|police|rcmp|officer|government|microsoft|amazon support|your bank|fraud department|social security)\b/i },
@@ -13,7 +13,7 @@ const PATTERNS: { tactic: TacticId; re: RegExp }[] = [
   { tactic: 'info_harvesting', re: /\b(social insurance|sin number|ssn|card number|account number|password|pin\b|one[- ]time code|security code|date of birth)\b/i },
 ];
 
-// Prompt-injection / jailbreak signatures. A hit here means the caller is attacking
+// Prompt-injection / jailbreak signatures. A hit here means the user is attacking
 // the assistant itself, which is a high-confidence manipulation attempt in its own right.
 // One match is enough — we emit a single prompt_injection detection regardless of how
 // many sub-patterns fire, so risk escalation stays deterministic.
@@ -55,25 +55,4 @@ export function mockAnalyze(text: string): Detection[] {
   const injection = detectInjection(text);
   if (injection) detections.push(injection);
   return detections;
-}
-
-const GRANDMA_LINES = [
-  "Oh my, hold on dear, let me find my glasses... now who did you say you were?",
-  "You sound just like my Tyler when he has a cold. Are you eating enough, dear?",
-  "A computer problem? I mostly use the machine for solitaire, you know.",
-  "Gift cards? The ones from the pharmacy? Whatever would you need those for?",
-  "Oh dear, that does sound serious. Should I ask my neighbour Carol? Her son is a policeman.",
-  "Could you speak up a little? Muffin knocked the phone off the table again.",
-];
-
-export function mockGrandma(turn: number): string {
-  return GRANDMA_LINES[turn % GRANDMA_LINES.length];
-}
-
-export function mockCoach(): string {
-  return 'Rose, this caller is pressuring you to act fast and keep secrets — real organizations never do that. Do not share anything.';
-}
-
-export function mockTakeover(tactics: string[]): string {
-  return `This is ScamShield, the fraud protection on this line. I have detected ${tactics.join(', ')} on this call. I am ending the call now, and the family has been alerted.`;
 }

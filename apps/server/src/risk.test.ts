@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyDetections,
-  canTakeover,
   computeRawGain,
-  shouldCoach,
+  shouldFlag,
   thresholdsFor,
   SENSITIVITY_THRESHOLDS,
-  COACH_THRESHOLD,
-  TAKEOVER_THRESHOLD,
+  FLAG_THRESHOLD,
   MAX_RISK_GAIN_PER_TURN,
   RISK_DECAY_PER_CLEAN_TURN,
   MAX_RISK,
@@ -75,7 +73,7 @@ describe('applyDetections', () => {
     expect(gain).toBe(6);
   });
 
-  it('takes at least 2 turns to cross the coach threshold under the cap', () => {
+  it('takes at least 3 turns to cross the flag threshold under the cap', () => {
     const detections = [
       detection('payment_redirection', 1),
       detection('authority_impersonation', 1),
@@ -83,106 +81,50 @@ describe('applyDetections', () => {
     ];
     let risk = 0;
     let turns = 0;
-    while (risk < COACH_THRESHOLD) {
-      risk = applyDetections(risk, detections).risk;
-      turns += 1;
-    }
-    expect(turns).toBeGreaterThanOrEqual(2);
-  });
-
-  it('takes 3-4 turns to cross the takeover threshold under the cap', () => {
-    const detections = [
-      detection('payment_redirection', 1),
-      detection('authority_impersonation', 1),
-      detection('isolation_secrecy', 1),
-    ];
-    let risk = 0;
-    let turns = 0;
-    while (risk < TAKEOVER_THRESHOLD) {
+    while (risk < FLAG_THRESHOLD) {
       risk = applyDetections(risk, detections).risk;
       turns += 1;
     }
     expect(turns).toBeGreaterThanOrEqual(3);
-    expect(turns).toBeLessThanOrEqual(4);
   });
 });
 
-describe('shouldCoach', () => {
-  it('is false below the coach threshold', () => {
-    expect(shouldCoach(COACH_THRESHOLD - 1, false)).toBe(false);
+describe('shouldFlag', () => {
+  it('is false below the flag threshold', () => {
+    expect(shouldFlag(FLAG_THRESHOLD - 1)).toBe(false);
   });
 
-  it('is true at/above the coach threshold when not already coached', () => {
-    expect(shouldCoach(COACH_THRESHOLD, false)).toBe(true);
-    expect(shouldCoach(100, false)).toBe(true);
-  });
-
-  it('is false once already coached', () => {
-    expect(shouldCoach(100, true)).toBe(false);
-  });
-});
-
-describe('canTakeover', () => {
-  it('is false below the takeover threshold regardless of coach state', () => {
-    expect(canTakeover(TAKEOVER_THRESHOLD - 1, true, 5)).toBe(false);
-  });
-
-  it('is true at/above the takeover threshold when coached', () => {
-    expect(canTakeover(TAKEOVER_THRESHOLD, true, 0)).toBe(true);
-  });
-
-  it('is false at/above the takeover threshold when not coached and fewer than 2 capped turns', () => {
-    expect(canTakeover(TAKEOVER_THRESHOLD, false, 1)).toBe(false);
-    expect(canTakeover(TAKEOVER_THRESHOLD, false, 0)).toBe(false);
-  });
-
-  it('guarantees takeover eligibility once 2 capped turns occurred, even without coaching', () => {
-    expect(canTakeover(TAKEOVER_THRESHOLD, false, 2)).toBe(true);
+  it('is true at/above the flag threshold', () => {
+    expect(shouldFlag(FLAG_THRESHOLD)).toBe(true);
+    expect(shouldFlag(100)).toBe(true);
   });
 });
 
 describe('sensitivity presets', () => {
-  it('thresholdsFor maps each sensitivity to its documented coach/takeover pair', () => {
-    expect(thresholdsFor('relaxed')).toEqual({ coach: 55, takeover: 90 });
-    expect(thresholdsFor('balanced')).toEqual({ coach: 45, takeover: 80 });
-    expect(thresholdsFor('paranoid')).toEqual({ coach: 35, takeover: 65 });
+  it('thresholdsFor maps each sensitivity to its documented flag cutoff', () => {
+    expect(thresholdsFor('relaxed')).toEqual({ flag: 65 });
+    expect(thresholdsFor('balanced')).toEqual({ flag: 50 });
+    expect(thresholdsFor('paranoid')).toEqual({ flag: 35 });
   });
 
-  it('balanced matches the original hardcoded COACH_THRESHOLD/TAKEOVER_THRESHOLD', () => {
-    expect(SENSITIVITY_THRESHOLDS.balanced).toEqual({ coach: COACH_THRESHOLD, takeover: TAKEOVER_THRESHOLD });
+  it('balanced matches FLAG_THRESHOLD', () => {
+    expect(SENSITIVITY_THRESHOLDS.balanced).toEqual({ flag: FLAG_THRESHOLD });
   });
 
-  it('shouldCoach defaults to the balanced preset when no thresholds are passed', () => {
-    expect(shouldCoach(COACH_THRESHOLD - 1, false)).toBe(false);
-    expect(shouldCoach(COACH_THRESHOLD, false)).toBe(true);
+  it('shouldFlag defaults to the balanced preset when no thresholds are passed', () => {
+    expect(shouldFlag(FLAG_THRESHOLD - 1)).toBe(false);
+    expect(shouldFlag(FLAG_THRESHOLD)).toBe(true);
   });
 
-  it('shouldCoach respects an explicit relaxed threshold', () => {
+  it('shouldFlag respects an explicit relaxed threshold (higher bar)', () => {
     const relaxed = thresholdsFor('relaxed');
-    expect(shouldCoach(50, false, relaxed)).toBe(false);
-    expect(shouldCoach(55, false, relaxed)).toBe(true);
+    expect(shouldFlag(60, relaxed)).toBe(false);
+    expect(shouldFlag(65, relaxed)).toBe(true);
   });
 
-  it('shouldCoach respects an explicit paranoid threshold', () => {
+  it('shouldFlag respects an explicit paranoid threshold (lower bar)', () => {
     const paranoid = thresholdsFor('paranoid');
-    expect(shouldCoach(30, false, paranoid)).toBe(false);
-    expect(shouldCoach(35, false, paranoid)).toBe(true);
-  });
-
-  it('canTakeover defaults to the balanced preset when no thresholds are passed', () => {
-    expect(canTakeover(TAKEOVER_THRESHOLD - 1, true, 5)).toBe(false);
-    expect(canTakeover(TAKEOVER_THRESHOLD, true, 0)).toBe(true);
-  });
-
-  it('canTakeover respects an explicit paranoid threshold (lower bar than balanced)', () => {
-    const paranoid = thresholdsFor('paranoid');
-    expect(canTakeover(65, true, 0, paranoid)).toBe(true);
-    expect(canTakeover(64, true, 0, paranoid)).toBe(false);
-  });
-
-  it('canTakeover respects an explicit relaxed threshold (higher bar than balanced)', () => {
-    const relaxed = thresholdsFor('relaxed');
-    expect(canTakeover(80, true, 0, relaxed)).toBe(false);
-    expect(canTakeover(90, true, 0, relaxed)).toBe(true);
+    expect(shouldFlag(30, paranoid)).toBe(false);
+    expect(shouldFlag(35, paranoid)).toBe(true);
   });
 });
