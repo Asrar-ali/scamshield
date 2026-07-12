@@ -151,7 +151,8 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
   // Discord users a flag already muted. Further messages are stonewalled (no
   // analysis, no Gemini) so "this user is flagged" stays true instead of a fresh
   // session resetting their risk.
-  const blockedUsers = new Set<string>();
+  const blockedUsers = new Set<string>(); // `${guildId}:${userId}` — muted in a specific server
+  const knownBadActors = new Set<string>(); // userId only — flagged in any server; used to elevate risk cross-server
   // Forward declaration: assigned once below by startDiscordChannel. Referenced by
   // dispatchAlert / runMessage, which are closures over this binding. One bot client
   // shared across monitoring, message deletion, timeouts, and alert delivery.
@@ -534,6 +535,14 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     let session = existingId ? sessions.get(existingId) : undefined;
     if (!session || session.ended) {
       session = createSession(sanitizeAlias(msg.username), msg.userId, msg.avatarUrl);
+      // Known bad actors (flagged in any other server) start with elevated risk so a
+      // single suspicious message in a new server is enough to cross the threshold.
+      if (knownBadActors.has(msg.userId)) {
+        const thresholds = thresholdsFor(settingsManager.get().sensitivity);
+        session.risk = Math.round(thresholds.flag * 0.6);
+        session.maxRisk = session.risk;
+        broadcast({ type: 'risk', score: session.risk, ts: Date.now(), userId: msg.userId }, session.id);
+      }
       watchedUsers.set(userKey, session.id);
     }
 
@@ -541,6 +550,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     if (result.flagged) {
       watchedUsers.delete(userKey);
       blockedUsers.add(userKey);
+      knownBadActors.add(msg.userId);
     }
     return result;
   };
