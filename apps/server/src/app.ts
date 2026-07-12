@@ -74,7 +74,6 @@ function buildWarningNotice(username: string, tacticLabels: string[]): string {
   return `⚠️ ScamShield removed a message from ${username}. Detected: ${tactics}.`;
 }
 
-const DISCORD_BLOCKED_REPLY = 'This user has already been flagged by ScamShield and remains muted.';
 
 const DETECTIONS_SCHEMA = {
   type: 'OBJECT',
@@ -487,8 +486,9 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     // Already-flagged user: stay muted, no new analysis, no Gemini spend.
     if (blockedUsers.has(msg.userId)) {
       if (msg.raw) {
-        await msg.raw.reply(DISCORD_BLOCKED_REPLY).catch(() => undefined);
+        await msg.raw.delete().catch(() => undefined);
       }
+      await timeoutMember(discord, { userId: msg.userId, guildId: msg.guildId, minutes: FLAG_TIMEOUT_MINUTES });
       return { flagged: false };
     }
 
