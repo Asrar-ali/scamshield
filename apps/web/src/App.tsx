@@ -27,7 +27,7 @@ import {
   type Settings,
 } from './lib/api';
 
-type Screen = 'dashboard' | 'monitor' | 'leaderboard' | 'servers';
+type Screen = 'dashboard' | 'monitor' | 'leaderboard';
 
 interface AlertTactic {
   tactic: string;
@@ -130,6 +130,18 @@ export default function App() {
     const id = setInterval(poll, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  // Poll Discord status every 3s while on the monitor screen so user cards update live.
+  useEffect(() => {
+    if (screen !== 'monitor') return;
+    let cancelled = false;
+    const poll = async () => {
+      const d = await fetchDiscordStatus().catch(() => null);
+      if (!cancelled && d) setDiscordStatus(d);
+    };
+    const id = setInterval(poll, 3_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [screen]);
 
   const dismissDeliveryToast = useCallback((id: number) => {
     setDeliveryToasts((prev) => prev.filter((t) => t.id !== id));
@@ -337,15 +349,6 @@ export default function App() {
             leaderboard
           </button>
 
-          <button type="button" className={`sidebar-nav-item${screen === 'servers' ? ' is-active' : ''}`} onClick={() => setScreen('servers')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="8" x="2" y="2" rx="2"/>
-              <rect width="20" height="8" x="2" y="14" rx="2"/>
-              <line x1="6" x2="6.01" y1="6" y2="6"/>
-              <line x1="6" x2="6.01" y1="18" y2="18"/>
-            </svg>
-            servers
-          </button>
         </nav>
 
         <div className="sidebar-spacer" />
@@ -667,51 +670,6 @@ export default function App() {
               <h1 className="page-title">flagged sessions</h1>
               <p className="page-sub">Every session caught by the classifier, ranked by turns survived.</p>
               <Leaderboard refreshSignal={leaderboardRefresh} onReplay={(id, alias) => { void openReplay(id, alias); setScreen('monitor'); }} />
-            </div>
-          )}
-
-          {/* SERVERS */}
-          {screen === 'servers' && (
-            <div>
-              <div className="page-eyebrow">servers</div>
-              <h1 className="page-title">monitored servers</h1>
-              <p className="page-sub">
-                {discordStatus.enabled
-                  ? `Bot connected as ${discordStatus.botTag} · ${discordStatus.guildName ?? 'unknown server'}`
-                  : 'No Discord bot connected. Set DISCORD_BOT_TOKEN to enable monitoring.'}
-              </p>
-
-              {discordStatus.enabled && (
-                <div>
-                  <div className="section-label" style={{ marginBottom: 16 }}>active users</div>
-                  {discordStatus.monitoredUsers.length === 0 ? (
-                    <p className="empty" style={{ paddingTop: 8 }}>No users monitored yet.</p>
-                  ) : (
-                    <div style={{ borderTop: '1px solid var(--border)' }}>
-                      <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
-                        <span>user</span><span>risk</span><span>messages</span><span>tactics</span><span>status</span>
-                      </div>
-                      {discordStatus.monitoredUsers.map(u => (
-                        <div key={u.userId} className="table-row" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)' }}>{u.name}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: u.risk >= 65 ? 'var(--crit)' : u.risk >= 35 ? 'var(--warn)' : 'var(--muted)' }}>{u.risk}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--muted)' }}>{u.turns}</span>
-                          <span style={{ fontSize: 12, color: 'var(--muted-2)' }}>{u.tactics.slice(0, 2).join(', ') || '—'}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: u.blocked ? 'var(--crit)' : 'var(--accent)' }}>{u.blocked ? 'blocked' : 'watching'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="section-divider" style={{ marginTop: 32 }} />
-                  <div className="section-label" style={{ marginBottom: 16 }}>sensitivity</div>
-                  <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 8 }}>
-                    Current: <span style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{settings?.sensitivity ?? 'balanced'}</span>
-                    {' '}— flag threshold <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>{settings?.thresholds?.flag ?? 50}</span>
-                  </p>
-                  <p style={{ fontSize: 12, color: 'var(--muted-2)' }}>Change via Settings → Detection.</p>
-                </div>
-              )}
             </div>
           )}
 

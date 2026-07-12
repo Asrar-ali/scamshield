@@ -72,7 +72,7 @@ export function RiskTimeline({ samples, markers, interventions, thresholds, star
           <linearGradient id={gradId} x1="0" y1={g.padT} x2="0" y2={g.padT + plotH} gradientUnits="userSpaceOnUse">
             <stop offset="0" stopColor="var(--crit)" />
             <stop offset="0.45" stopColor="var(--warn)" />
-            <stop offset="1" stopColor="var(--grandma)" />
+            <stop offset="1" stopColor="var(--accent)" />
           </linearGradient>
         </defs>
 
