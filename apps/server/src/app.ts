@@ -376,7 +376,7 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
         await ch.send(notice).catch((err: unknown) =>
           log.warn('discord warning post failed:', err instanceof Error ? err.message : err),
         );
-        broadcast({ type: 'action', action: 'warned', userId: msg.userId, detail: notice, ts: Date.now() }, session.id);
+        broadcast({ type: 'action', action: 'warned', userId: msg.userId, detail: 'Posted in channel', ts: Date.now() }, session.id);
       }
     }
 
