@@ -365,8 +365,11 @@ export function buildApp(options: BuildAppOptions = {}): BuiltApp {
     const notice = buildWarningNotice(msg.username, tacticLabels);
     broadcast({ type: 'intervention', level: 'flag', text: notice, ts: Date.now(), userId: msg.userId }, session.id);
 
-    // Post the warning notice in-channel (best-effort).
+    // React to the flagged message and post the warning notice in-channel (best-effort).
     if (msg.raw) {
+      await msg.raw.react('⚠️').catch((err: unknown) =>
+        log.warn('discord reaction failed:', err instanceof Error ? err.message : err),
+      );
       const ch = msg.raw.channel;
       if ('send' in ch && typeof ch.send === 'function') {
         await ch.send(notice).catch((err: unknown) =>
