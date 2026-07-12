@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Event } from './types';
-import { Header, type AiStatus } from './components/Header';
+import type { AiStatus } from './components/Header';
+import { GearIcon } from './components/icons';
 import { RiskGauge } from './components/RiskGauge';
 import { TacticsPanel, type TacticHit } from './components/TacticsPanel';
 import { InterventionsPanel, type FeedItem } from './components/InterventionsPanel';
@@ -28,9 +29,6 @@ const TOAST_LIFETIME_MS = 7000;
 const DISCONNECTED_DISCORD: DiscordStatus = { enabled: false, botTag: null, guildName: null, monitoredUsers: [], recentUsers: [] };
 
 export default function App() {
-  // The currently-focused monitored user's session. The dashboard adopts the first
-  // session it sees a 'start' event for, and tracks that user live until their
-  // session ends (a flag). No alias form, no composer — the bot drives everything.
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
   const [focusUser, setFocusUser] = useState<string | null>(null);
   const [risk, setRisk] = useState(0);
@@ -52,8 +50,6 @@ export default function App() {
     focusSessionRef.current = focusSessionId;
   }, [focusSessionId]);
 
-  // Fetch settings + Discord status once on mount. Both degrade to a benign
-  // "not connected" shape on 404 / network failure — see lib/api.ts.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -64,12 +60,9 @@ export default function App() {
       const d = await fetchDiscordStatus();
       if (!cancelled) setDiscordStatus(d);
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Refresh Discord status (monitored users) each time the settings drawer opens.
   useEffect(() => {
     if (!settingsOpen) return;
     let cancelled = false;
@@ -77,12 +70,9 @@ export default function App() {
       const d = await fetchDiscordStatus();
       if (!cancelled) setDiscordStatus(d);
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [settingsOpen]);
 
-  // Health-poll the AI status chip.
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -91,37 +81,22 @@ export default function App() {
         if (!res.ok) return;
         const data = (await res.json()) as { ai?: AiStatus };
         if (!cancelled && data.ai) setAiStatus(data.ai);
-      } catch {
-        // Cosmetic — never surface.
-      }
+      } catch { /* cosmetic */ }
     };
     void poll();
     const id = setInterval(poll, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   const dismissDeliveryToast = useCallback((id: number) => {
     setDeliveryToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Apply one live event to console state. Passed to useLiveSocket, which owns the
-  // socket lifecycle + reconnect; this stays a pure event→state reducer.
   const handleEvent = useCallback((event: Event) => {
-    // Session scoping: the server stamps every per-session event with `sid`.
-    // Ignore events from any session other than the one this console has adopted,
-    // so a second monitored user can't interleave onto this screen.
     const sid = (event as { sid?: string }).sid;
     if (event.type !== 'session' && sid && sid !== focusSessionRef.current) return;
     switch (event.type) {
       case 'utterance':
-        // Only scammer utterances matter here (there is no Rose reply). Guardian
-        // utterances don't exist in monitoring mode.
-        if (event.role === 'scammer') {
-          // No transcript UI — utterances feed the risk/tactics panels implicitly.
-        }
         break;
       case 'tactic':
         setHits((prev) => [{ tactic: event.tactic, confidence: event.confidence, evidence: event.evidence, ts: event.ts }, ...prev]);
@@ -148,7 +123,6 @@ export default function App() {
       }
       case 'session':
         if (event.state === 'start') {
-          // Adopt the first session we see if nothing is in focus.
           if (focusSessionRef.current) break;
           focusSessionRef.current = event.id;
           setFocusSessionId(event.id);
@@ -175,7 +149,6 @@ export default function App() {
     if (data) setReplay(data);
   }, []);
 
-  // The forensic report for the focused user's session, once it ends.
   const liveAutopsy = useMemo<AutopsyData | null>(() => {
     if (!focusSessionId || riskSamples.length === 0) return null;
     return buildAutopsyFromLive({
@@ -201,9 +174,11 @@ export default function App() {
     setReplay(null);
   }, []);
 
+  // suppress unused warning — settings is fetched and passed to drawer
+  void settings;
+
   return (
     <div className="app">
-      <div className="app-bg" aria-hidden="true" />
       <DeliveryToast toasts={deliveryToasts} onDismiss={dismissDeliveryToast} />
       <SettingsDrawer
         open={settingsOpen}
@@ -211,72 +186,125 @@ export default function App() {
         initialSettings={settings}
         discordStatus={discordStatus}
       />
-      <Header
-        connState={connState}
-        aiStatus={aiStatus}
-        guildName={discordStatus.guildName}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
 
-      {replay ? (
-        <main className="call-layout">
-          <div className="left-stack replay-stack">
-            <div className="replay-bar">
-              <button type="button" className="replay-back" onClick={() => setReplay(null)}>
-                <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M15 5l-7 7 7 7" />
-                </svg>
-                Back
-              </button>
-              <span className="replay-tag">Detection history</span>
+      {/* sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+          <span className="sidebar-logo-text">scamshield</span>
+        </div>
+
+        <nav className="sidebar-nav">
+          <button
+            type="button"
+            className={`sidebar-nav-item${!replay ? ' is-active' : ''}`}
+            onClick={goHome}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" />
+              <rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" />
+            </svg>
+            monitor
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-nav-item${replay ? ' is-active' : ''}`}
+            onClick={() => { /* leaderboard visible in main content */ }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+            </svg>
+            leaderboard
+          </button>
+        </nav>
+
+        <div className="sidebar-spacer" />
+
+        <div className="sidebar-footer">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+            <div className={`conn conn-${connState}`}>
+              <span className="conn-dot" />
+              {connState === 'connected' ? 'connected' : connState}
             </div>
-            <Autopsy data={replay} />
+            {aiStatus && (
+              <div className={`ai-chip ai-chip-${aiStatus}`}>
+                {aiStatus === 'live' ? 'live ai' : aiStatus === 'degraded' ? 'degraded' : 'mock ai'}
+              </div>
+            )}
           </div>
-          <section className="side">
-            <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
-          </section>
-        </main>
-      ) : !focusSessionId ? (
-        <main className="call-layout">
-          <div className="left-stack">
-            <div className="monitor-idle">
-              <h2>ScamShield is monitoring</h2>
-              <p className="empty">
-                Waiting for the bot to observe messages in {discordStatus.guildName ?? 'your Discord server'}.
-                When a member's risk crosses the flag threshold, their detection appears here live.
+          <button type="button" className="icon-btn" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
+            <GearIcon width={15} height={15} />
+          </button>
+        </div>
+      </aside>
+
+      {/* main content */}
+      <div className="main-content">
+        <div className="main-inner">
+          {replay ? (
+            <div>
+              <button type="button" className="back-btn" onClick={() => setReplay(null)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+                </svg>
+                back
+              </button>
+              <div className="page-eyebrow">detection history</div>
+              <div className="left-stack">
+                <Autopsy data={replay} />
+                <div className="section-divider" />
+                <div className="section-label">leaderboard</div>
+                <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
+              </div>
+            </div>
+          ) : !focusSessionId ? (
+            <div>
+              <div className="page-eyebrow">monitor</div>
+              <h1 className="page-title">dashboard</h1>
+              <p className="page-sub">
+                {discordStatus.guildName
+                  ? `Monitoring ${discordStatus.guildName}. Waiting for the bot to observe messages.`
+                  : 'Connect a Discord server to start monitoring.'}
               </p>
               <DiscordPanel status={discordStatus} />
+              <div className="section-divider" style={{ marginTop: 40 }} />
+              <div className="section-label">leaderboard</div>
+              <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
             </div>
-          </div>
-          <section className="side">
-            <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
-          </section>
-        </main>
-      ) : (
-        <main className="call-layout">
-          <div className="left-stack">
-            <div className="monitor-focus-head">
-              <h2>{focusUser}</h2>
-              {discordStatus.guildName && <span className="channel-chip channel-chip--telegram">in {discordStatus.guildName}</span>}
+          ) : (
+            <div>
+              <div className="page-eyebrow">monitoring</div>
+              <div className="monitor-focus-head">
+                <h2>{focusUser}</h2>
+                {discordStatus.guildName && (
+                  <span className="channel-chip channel-chip--telegram">in {discordStatus.guildName}</span>
+                )}
+              </div>
+              <div className="left-stack" style={{ marginTop: 24 }}>
+                <RiskGauge
+                  risk={risk}
+                  samples={riskSamples}
+                  markers={hits.map((h) => ({ tactic: h.tactic, ts: h.ts }))}
+                  interventions={[]}
+                  startTs={riskSamples[0]?.ts ?? null}
+                  endTs={null}
+                />
+                <TacticsPanel hits={hits} />
+                <InterventionsPanel items={feed} />
+                {liveAutopsy && <Autopsy data={liveAutopsy} />}
+                <div className="section-divider" />
+                <div className="section-label">leaderboard</div>
+                <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
+              </div>
             </div>
-            <RiskGauge
-              risk={risk}
-              samples={riskSamples}
-              markers={hits.map((h) => ({ tactic: h.tactic, ts: h.ts }))}
-              interventions={[]}
-              startTs={riskSamples[0]?.ts ?? null}
-              endTs={null}
-            />
-            <TacticsPanel hits={hits} />
-            <InterventionsPanel items={feed} />
-            {liveAutopsy && <Autopsy data={liveAutopsy} />}
-          </div>
-
-          <section className="side">
-            <Leaderboard refreshSignal={leaderboardRefresh} onReplay={openReplay} />
-          </section>
-        </main>
-      )}
+          )}
+        </div>
+      </div>
     </div>
   );
 }
