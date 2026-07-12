@@ -83,6 +83,7 @@ export default function App() {
 
   const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
   const [selectedGuildId, setSelectedGuildId] = useState<string | null>(null);
+  const [expandedMonitorKey, setExpandedMonitorKey] = useState<string | null>(null);
 
   const focusSessionRef = useRef<string | null>(null);
   const deliveryToastIdRef = useRef(0);
@@ -616,10 +617,12 @@ export default function App() {
                         .filter((u) => selectedGuildId === null || u.guildId === selectedGuildId)
                         .sort((a, b) => b.maxRisk - a.maxRisk)
                         .map((u) => {
+                          const cardKey = `${u.guildId}:${u.userId}`;
                           const isLive = focusUser === u.name || (focusSessionId && !u.blocked && discordStatus.monitoredUsers.length === 1);
+                          const isExpanded = expandedMonitorKey === cardKey;
                           const riskColor = u.maxRisk >= 65 ? 'var(--crit)' : u.maxRisk >= 35 ? 'var(--warn)' : 'var(--accent)';
                           return (
-                            <div key={`${u.guildId}:${u.userId}`}>
+                            <div key={cardKey}>
                               <div
                                 style={{
                                   border: `1px solid ${u.blocked ? 'rgba(239,68,68,0.4)' : isLive ? 'rgba(52,211,153,0.4)' : 'var(--border)'}`,
@@ -628,7 +631,7 @@ export default function App() {
                                   background: 'var(--surface)',
                                   cursor: isLive ? 'pointer' : 'default',
                                 }}
-                                onClick={() => isLive && setSelectedAlertId(selectedAlertId === -1 ? null : -1)}
+                                onClick={() => isLive && setExpandedMonitorKey(isExpanded ? null : cardKey)}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                                   {u.avatarUrl ? (
@@ -690,7 +693,7 @@ export default function App() {
                               </div>
 
                               {/* Expanded live gauge for the active session user */}
-                              {isLive && selectedAlertId === -1 && (
+                              {isLive && isExpanded && (
                                 <div className="left-stack" style={{ marginTop: 12 }}>
                                   <RiskGauge
                                     risk={risk}
