@@ -218,14 +218,13 @@ export default function App() {
         const e = event as { type: 'action'; action: string; userId?: string };
         const isCritical = e.action === 'deleted' || e.action === 'muted';
         const dotColor = isCritical ? 'var(--crit)' : 'var(--accent)';
-        const text = `${e.action} — ${e.userId ?? 'user'}`;
 
         // Snapshot pending data when the first critical action fires (deleted/muted)
         const pending = pendingAlertRef.current;
-        const resolvedAlias = pending.alias ?? pending.userId;
+        const resolvedAlias = pending.alias ?? pending.userId ?? e.userId ?? 'user';
         const item: EventLogItem = {
           id,
-          text: isCritical ? `${e.action} — ${resolvedAlias ?? e.userId ?? 'user'}` : text,
+          text: `${e.action} — ${resolvedAlias}`,
           dotColor,
           ts,
           action: e.action,
@@ -259,11 +258,15 @@ export default function App() {
 
       if (event.type === 'tactic') {
         const e = event as { type: 'tactic'; tactic: string; confidence: number; evidence: string };
+        const pending = pendingAlertRef.current;
         return [{
           id,
           text: `detected: ${e.tactic.replace(/_/g, ' ')} (${Math.round(e.confidence * 100)}%)`,
           dotColor: 'var(--warn)',
           ts,
+          alias: pending.alias,
+          userId: pending.userId,
+          avatarUrl: pending.avatarUrl,
           messageText: e.evidence,
         }, ...prev].slice(0, 100);
       }
