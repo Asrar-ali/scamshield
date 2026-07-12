@@ -62,7 +62,7 @@ export function Leaderboard({ refreshSignal, onReplay }: LeaderboardProps) {
             Threat Intel
           </button>
         </div>
-        {view === 'leaderboard' && <span className="lb-subtitle">turns before defused</span>}
+        {view === 'leaderboard' && <span className="lb-subtitle">messages before caught</span>}
       </div>
 
       {view === 'leaderboard' ? (
@@ -94,7 +94,7 @@ export function Leaderboard({ refreshSignal, onReplay }: LeaderboardProps) {
             >
               <span className="lb-rank">{i + 1}</span>
               <span className="lb-alias">{e.alias || 'Anonymous Scammer'}</span>
-              <span className="lb-turns">{e.turns}</span>
+              <span className="lb-turns">{e.turns} {e.turns === 1 ? 'msg' : 'msgs'}</span>
               <span className={`lb-outcome lb-${e.outcome}`}>{e.outcome === 'caught' ? 'Caught' : 'Gave up'}</span>
             </div>
           ))}

@@ -412,7 +412,7 @@ export default function App() {
               </div>
 
               <div className="section-label" style={{ marginTop: 32 }}>event feed</div>
-              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Click an action card to see user, message, and detected tactics.</p>
+              {eventLog.length > 0 && <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>Click an action card to see user, message, and detected tactics.</p>}
               {eventLog.length === 0 ? (
                 <p className="empty" style={{ paddingTop: 8 }}>No events yet — waiting for the bot to detect activity.</p>
               ) : (

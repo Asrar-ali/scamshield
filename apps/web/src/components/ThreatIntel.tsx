@@ -29,11 +29,11 @@ export function ThreatIntel({ refreshSignal }: ThreatIntelProps) {
   }, [refreshSignal]);
 
   if (!data || data.totalCalls === 0) {
-    return <p className="empty">No calls yet.</p>;
+    return <p className="empty">No detections yet.</p>;
   }
 
   const stats = [
-    { label: 'Calls', value: String(data.totalCalls) },
+    { label: 'Sessions', value: String(data.totalCalls) },
     { label: 'Catch rate', value: `${Math.round(data.catchRate * 100)}%` },
     { label: 'Turns to catch', value: data.avgTurnsToCatch ? data.avgTurnsToCatch.toFixed(1) : '—' },
     { label: 'Alerts sent', value: String(data.totalAlertsSent) },
