@@ -337,7 +337,7 @@ export default function App() {
               <rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>
             </svg>
             <span style={{ flex: 1 }}>dashboard</span>
-            {eventLog.length > 0 && <span className="sidebar-nav-badge">{Math.min(eventLog.length, 99)}</span>}
+            {(() => { const n = eventLog.filter(i => i.action === 'muted' || i.action === 'deleted').length; return n > 0 && <span className="sidebar-nav-badge">{Math.min(n, 99)}</span>; })()}
           </button>
 
           <button type="button" className={`sidebar-nav-item${screen === 'monitor' ? ' is-active' : ''}`} onClick={() => setScreen('monitor')}>
@@ -393,7 +393,7 @@ export default function App() {
               <div className="stats-grid">
                 <div className="stat-cell">
                   <div className="stat-cell-label">monitored users</div>
-                  <div className="stat-cell-value">{discordStatus.monitoredUsers.length}</div>
+                  <div className="stat-cell-value">{new Set(discordStatus.monitoredUsers.map(u => u.userId)).size}</div>
                 </div>
                 <div className="stat-cell">
                   <div className="stat-cell-label">total flagged</div>
